@@ -48,11 +48,11 @@ class ProjectService:
         """
     try:
       # Insert project into Redis
-      headers = {
-          "Authorization":
-              f"Bearer {os.environ['KV_REST_API_TOKEN']}",  # Ensure you use the appropriate write-access API key
-          "Content-Type": "application/json"
-      }
+      # headers = {
+      #     "Authorization":
+      #         f"Bearer {os.environ['KV_REST_API_TOKEN']}",  # Ensure you use the appropriate write-access API key
+      #     "Content-Type": "application/json"
+      # }
       value = {
           "is_private": False,
           "course_owner": project_owner_email,
