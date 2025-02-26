@@ -131,10 +131,7 @@ ourSecrets = [
     "AGANSWERS_AWS_ACCESS_KEY_ID",
     "AGANSWERS_AWS_SECRET_ACCESS_KEY",
     "AGANSWERS_POSTHOG_API_KEY",
-    # "AZURE_OPENAI_KEY",
-    # "AZURE_OPENAI_ENGINE",
-    # "AZURE_OPENAI_KEY",
-    # "AZURE_OPENAI_ENDPOINT",
+    "CLOUDFLARE_R2_ENDPOINT",
 ]
 
 
@@ -166,10 +163,12 @@ def loader():
 
   # S3
   s3_client = boto3.client(
-      's3',
-      aws_access_key_id=os.getenv('AGANSWERS_AWS_ACCESS_KEY_ID'),
-      aws_secret_access_key=os.getenv('AGANSWERS_AWS_SECRET_ACCESS_KEY'),
-  )
+    's3',
+    aws_access_key_id=os.getenv('AGANSWERS_AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.getenv('AGANSWERS_AWS_SECRET_ACCESS_KEY'),
+    endpoint_url=os.getenv('CLOUDFLARE_R2_ENDPOINT'),
+    config=boto3.session.Config(s3={'addressing_style': 'path'})
+)
 
   # Create a Supabase client
   supabase_client = supabase.create_client(  # type: ignore
