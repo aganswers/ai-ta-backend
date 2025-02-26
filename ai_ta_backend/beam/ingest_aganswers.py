@@ -145,6 +145,8 @@ def loader():
   qdrant_client = QdrantClient(
       url=os.getenv('AGANSWERS_QDRANT_URL'),
       api_key=os.getenv('AGANSWERS_QDRANT_API_KEY'),
+      port=443, 
+      https=True,
   )
 
   cropwizard_qdrant_client = QdrantClient(

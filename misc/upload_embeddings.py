@@ -19,9 +19,9 @@ ollama_client = Client(host=os.environ['OLLAMA_URL'])
 
 qdrant_client = QdrantClient(
     url=os.environ['QDRANT_URL'],
-    #   port=int(os.environ['QDRANT_PORT']),
-    https=False,
     api_key=os.environ['QDRANT_API_KEY'])
+    https=True,
+    port=443,
 
 try:
   collection_info = qdrant_client.get_collection(collection_name=os.environ['QDRANT_COLLECTION_NAME'])
