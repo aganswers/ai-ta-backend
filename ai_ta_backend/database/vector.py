@@ -27,10 +27,14 @@ class VectorDatabase():
         timeout=20,  # default is 5 seconds. Getting timeout errors w/ document groups.
     )
 
-    self.vyriad_qdrant_client = QdrantClient(url=os.environ['VYRIAD_QDRANT_URL'],
-                                             port=int(os.environ['VYRIAD_QDRANT_PORT']),
-                                             https=True,
-                                             api_key=os.environ['VYRIAD_QDRANT_API_KEY'])
+    try: 
+      self.vyriad_qdrant_client = QdrantClient(url=os.environ['VYRIAD_QDRANT_URL'],
+                                              port=int(os.environ['VYRIAD_QDRANT_PORT']),
+                                              https=True,
+                                              api_key=os.environ['VYRIAD_QDRANT_API_KEY'])
+    except Exception as e:
+      # print(f"Error in vyriad_qdrant_client: {e}")
+      self.vyriad_qdrant_client = None
 
     try:
       # No major uptime guarantees
