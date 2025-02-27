@@ -71,7 +71,7 @@ class ProjectService:
 
       # Set course_metadatas
       print("Setting course_metadatas. value: ", value)
-      self.redis_client.hset('course_metadatas', key=project_name, value=json.dumps(value))
+      self.redis_client.hset('course_metadatas', project_name, json.dumps(value))
 
       # check if the project owner has pre-assigned API keys
       if project_owner_email:
