@@ -1,7 +1,8 @@
 import json
 import os
 
-import redis
+# import redis
+from upstash_redis import Redis
 import requests
 from injector import inject
 
@@ -25,7 +26,8 @@ class ProjectService:
     self.sentry = sentry_service
 
     print("Connecting to Redis... with url: ", os.environ['REDIS_URL'])
-    self.redis_client = redis.Redis.from_url(os.environ['REDIS_URL'], db=0)
+    # self.redis_client = redis.Redis.from_url(os.environ['REDIS_URL'], db=0)
+    self.redis_client = Redis(url=os.environ['UPSTASH_REDIS_REST_URL'], token=os.environ['UPSTASH_REDIS_REST_TOKEN'])
 
   def generate_json_schema(self, project_name: str, project_description: str | None) -> None:
     # Generate metadata schema using project_name and project_description
