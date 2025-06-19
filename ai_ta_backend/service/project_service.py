@@ -25,7 +25,7 @@ class ProjectService:
     self.posthog = posthog_service
     self.sentry = sentry_service
 
-    print("Connecting to Redis... with url: ", os.environ['REDIS_URL'])
+    print("Connecting to Redis... with url: ", os.environ['UPSTASH_REDIS_REST_URL'])
     # self.redis_client = redis.Redis.from_url(os.environ['REDIS_URL'], db=0)
     self.redis_client = Redis(url=os.environ['UPSTASH_REDIS_REST_URL'], token=os.environ['UPSTASH_REDIS_REST_TOKEN'])
 

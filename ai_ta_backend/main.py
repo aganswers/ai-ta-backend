@@ -46,7 +46,7 @@ from ai_ta_backend.utils.pubmed_extraction import extractPubmedData
 from ai_ta_backend.utils.rerun_webcrawl_for_project import webscrape_documents
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["https://dev.aganswers.ai/", "https://dev.aganswers.ai"])
 executor = Executor(app)
 # app.config['EXECUTOR_MAX_WORKERS'] = 5 nothing == picks defaults for me
 #app.config['SERVER_TIMEOUT'] = 1000  # seconds
