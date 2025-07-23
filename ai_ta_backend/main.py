@@ -47,7 +47,7 @@ from ai_ta_backend.utils.pubmed_extraction import extractPubmedData
 from ai_ta_backend.utils.rerun_webcrawl_for_project import webscrape_documents
 
 app = Flask(__name__)
-CORS(app, origins=["https://dev.aganswers.ai/", "https://dev.aganswers.ai"])
+CORS(app, origins=["https://aganswers.ai", "https://*.aganswers.ai"])
 executor = Executor(app)
 # app.config['EXECUTOR_MAX_WORKERS'] = 5 nothing == picks defaults for me
 #app.config['SERVER_TIMEOUT'] = 1000  # seconds
@@ -737,7 +737,7 @@ def updateProjectDocuments(flaskExecutor: ExecutorInterface) -> Response:
 def chat_llm_proxy() -> Response:
   """
   Replacement for the former Next.js `/api/chat-api/chat` route.
-  Accepts the identical JSON payload and performs:
+  Accepts the identical JSON payload and will perform:
     • API–key validation (TODO)
     • Permission checks (TODO) 
     • Tool discovery & invocation (TODO)
@@ -752,21 +752,49 @@ def chat_llm_proxy() -> Response:
   Expected POST body (identical to the old chat.ts):
     {
       model, messages, temperature, course_name,
-      stream, api_key, retrieval_only
+      stream, api_key, retrieval_only, conversation
     }
   """
   
   payload = request.get_json(force=True)
 
-  # TODO: validate_api_key(payload["api_key"])
-  # TODO: permission = check_user_permission(...)
-  # TODO: course_meta = fetch_course_metadata(payload["course_name"])
-  # TODO: selected_model, providers = determine_and_validate_model(...)
-  # TODO: contexts = rag_retrieval(last_user_message, ...)
-  # TODO: tools = discover_tools(course_name, ...)
-  # TODO: attach_contexts_and_tools(...)
+  # ------------------------------------------------------------------
+  # PLACEHOLDER LOGIC – all real implementations will plug in here.
+  # ------------------------------------------------------------------
+  # TODO: validate_api_key(payload.get("api_key"))
+  #       Input: api_key (string)
+  #       Output: user_info (dict with user_id, permissions, etc.)
+  #       Raises: 401 if invalid
+  
+  # TODO: permission = check_user_permission(user_info, payload.get("course_name"))
+  #       Input: user_info (dict), course_name (string)
+  #       Output: permission_level (string: 'read', 'write', 'admin')
+  #       Raises: 403 if insufficient permissions
+  
+  # TODO: course_meta = fetch_course_metadata(payload.get("course_name"))
+  #       Input: course_name (string)
+  #       Output: CourseMetadata (dict with settings, doc_groups, etc.)
+  
+  # TODO: selected_model, providers = determine_and_validate_model(payload.get("model"))
+  #       Input: model (string like "gpt-4o", "claude-3-sonnet")
+  #       Output: (provider_name: string, normalized_model: string, api_keys: dict)
+  
+  # TODO: contexts = rag_retrieval(last_user_message, course_name, doc_groups, top_n=100)
+  #       Input: query (string), course_name (string), doc_groups (list), top_n (int)
+  #       Output: ContextWithMetadata[] (text, page#, filename, s3_path, score)
+  
+  # TODO: tools = discover_tools(course_name, user_permissions)
+  #       Input: course_name (string), permissions (dict)
+  #       Output: ToolDefinition[] (name, description, parameters, function)
+  
+  # TODO: image_captions = process_image_attachments(payload.get("image_urls", []))
+  #       Input: image_urls (list of strings)
+  #       Output: caption_text (string) for each image
+  # ------------------------------------------------------------------
 
-  messages = payload.get("messages", [])
+  # Extract conversation data
+  conversation = payload.get("conversation", {})
+  messages = conversation.get("messages", [])
   if not messages:
     abort(400, "No messages provided")
 
@@ -786,10 +814,16 @@ def chat_llm_proxy() -> Response:
   service = LLMSearchService()
   
   def generate():
-    for token in service.stream_response(question, chat_history):
-      yield f"{token}"
+    try:
+      for token in service.stream_response(question, chat_history):
+        yield token
+    except Exception as e:
+      print(f"Error in LLM streaming: {e}")
+      yield f"Error: {str(e)}"
       
-  return Response(generate(), mimetype="text/plain")
+  response = Response(generate(), mimetype="text/plain")
+  response.headers.add('Access-Control-Allow-Origin', '*')
+  return response
 
 
 def configure(binder: Binder) -> None:
