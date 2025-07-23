@@ -41,6 +41,7 @@ from ai_ta_backend.service.project_service import ProjectService
 from ai_ta_backend.service.retrieval_service import RetrievalService
 from ai_ta_backend.service.sentry_service import SentryService
 from ai_ta_backend.service.workflow_service import WorkflowService
+from ai_ta_backend.service.llmsearch_service import LLMSearchService
 from ai_ta_backend.utils.email.send_transactional_email import send_email
 from ai_ta_backend.utils.pubmed_extraction import extractPubmedData
 from ai_ta_backend.utils.rerun_webcrawl_for_project import webscrape_documents
@@ -730,6 +731,65 @@ def updateProjectDocuments(flaskExecutor: ExecutorInterface) -> Response:
   response = jsonify({"message": "success"})
   response.headers.add('Access-Control-Allow-Origin', '*')
   return response
+
+
+@app.route('/Chat', methods=['POST'])
+def chat_llm_proxy() -> Response:
+  """
+  Replacement for the former Next.js `/api/chat-api/chat` route.
+  Accepts the identical JSON payload and performs:
+    • API–key validation (TODO)
+    • Permission checks (TODO) 
+    • Tool discovery & invocation (TODO)
+    • Image → caption pipeline (TODO)
+    • Retrieval-Augmented Generation (RAG) (TODO)
+    • Model routing / temperature selection (TODO)
+    • Conversation persistence / analytics (TODO)
+
+  For v0 it forwards the final user query to `LLMSearchService`
+  and streams the plain-text answer back to the caller.
+
+  Expected POST body (identical to the old chat.ts):
+    {
+      model, messages, temperature, course_name,
+      stream, api_key, retrieval_only
+    }
+  """
+  
+  payload = request.get_json(force=True)
+
+  # TODO: validate_api_key(payload["api_key"])
+  # TODO: permission = check_user_permission(...)
+  # TODO: course_meta = fetch_course_metadata(payload["course_name"])
+  # TODO: selected_model, providers = determine_and_validate_model(...)
+  # TODO: contexts = rag_retrieval(last_user_message, ...)
+  # TODO: tools = discover_tools(course_name, ...)
+  # TODO: attach_contexts_and_tools(...)
+
+  messages = payload.get("messages", [])
+  if not messages:
+    abort(400, "No messages provided")
+
+  # Everything except the last message becomes chat_history
+  chat_history = [
+      {"role": m.get("role"), "content": m.get("content")}
+      for m in messages[:-1]
+  ]
+  last_message = messages[-1]
+  question = last_message.get("content", "")
+  if isinstance(question, list):  # image or mixed content array
+    question = " ".join(
+        part.get("text", "") for part in question if part.get("type") == "text"
+    )
+
+  # Initialize service and stream response
+  service = LLMSearchService()
+  
+  def generate():
+    for token in service.stream_response(question, chat_history):
+      yield f"{token}"
+      
+  return Response(generate(), mimetype="text/plain")
 
 
 def configure(binder: Binder) -> None:
