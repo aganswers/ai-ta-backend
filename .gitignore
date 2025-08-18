@@ -166,3 +166,7 @@ pip-selfcheck.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 .aider*
+
+GEMINI.md
+adk-samples/
+adk-python/
