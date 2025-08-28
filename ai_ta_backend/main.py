@@ -42,6 +42,7 @@ from ai_ta_backend.service.retrieval_service import RetrievalService
 from ai_ta_backend.service.sentry_service import SentryService
 from ai_ta_backend.service.workflow_service import WorkflowService
 from ai_ta_backend.service.llmsearch_service import LLMSearchService
+from ai_ta_backend.service.file_agent_service import FileAgentService
 from ai_ta_backend.utils.email.send_transactional_email import send_email
 from ai_ta_backend.utils.pubmed_extraction import extractPubmedData
 from ai_ta_backend.utils.rerun_webcrawl_for_project import webscrape_documents
@@ -734,7 +735,7 @@ def updateProjectDocuments(flaskExecutor: ExecutorInterface) -> Response:
 
 
 @app.route('/Chat', methods=['POST'])
-def chat_llm_proxy() -> Response:
+def chat_llm_proxy(file_agent_service: FileAgentService) -> Response:
   """
   Replacement for the former Next.js `/api/chat-api/chat` route.
   Accepts the identical JSON payload and will perform:
@@ -745,6 +746,7 @@ def chat_llm_proxy() -> Response:
     • Retrieval-Augmented Generation (RAG) (TODO)
     • Model routing / temperature selection (TODO)
     • Conversation persistence / analytics (TODO)
+    • File agent integration for CSV processing
 
   For v0 it forwards the final user query to `LLMSearchService`
   and streams the plain-text answer back to the caller.
@@ -794,9 +796,23 @@ def chat_llm_proxy() -> Response:
 
   # Extract conversation data
   conversation = payload.get("conversation", {})
+  conversation_id = conversation.get("id", "")
+  course_name = payload.get("course_name", "")
   messages = conversation.get("messages", [])
   if not messages:
     abort(400, "No messages provided")
+
+  # Prepare file agent with CSV files if course_name is provided
+  file_agent_ready = False
+  if course_name and conversation_id:
+    try:
+      print(f"Preparing file agent for course: {course_name}, conversation: {conversation_id}")
+      file_agent_ready = file_agent_service.prepare_file_agent(course_name, conversation_id)
+      if file_agent_ready:
+        print(f"File agent ready with CSV files for course: {course_name}")
+    except Exception as e:
+      print(f"Error preparing file agent: {e}")
+      # Continue without file agent if preparation fails
 
   # Everything except the last message becomes chat_history
   chat_history = [
@@ -817,6 +833,23 @@ def chat_llm_proxy() -> Response:
     try:
       for token in service.stream_response(question, chat_history):
         yield token
+      
+      # After streaming completes, process file agent outputs if it was used
+      if file_agent_ready and conversation_id:
+        try:
+          saved_files = file_agent_service.process_file_agent_outputs(conversation_id)
+          if saved_files['plots'] or saved_files['csvs']:
+            yield "\n\n---\n"
+            if saved_files['plots']:
+              yield f"\n📊 Generated plots saved: {', '.join(saved_files['plots'])}"
+            if saved_files['csvs']:
+              yield f"\n📁 Generated CSVs saved: {', '.join(saved_files['csvs'])}"
+          
+          # Clean up temporary files
+          file_agent_service.cleanup_temp_files(conversation_id)
+        except Exception as e:
+          print(f"Error processing file agent outputs: {e}")
+          
     except Exception as e:
       print(f"Error in LLM streaming: {e}")
       yield f"Error: {str(e)}"
@@ -835,6 +868,7 @@ def configure(binder: Binder) -> None:
   binder.bind(NomicService, to=NomicService, scope=SingletonScope)
   binder.bind(ExportService, to=ExportService, scope=SingletonScope)
   binder.bind(WorkflowService, to=WorkflowService, scope=SingletonScope)
+  binder.bind(FileAgentService, to=FileAgentService, scope=RequestScope)
   binder.bind(VectorDatabase, to=VectorDatabase, scope=SingletonScope)
   binder.bind(SQLDatabase, to=SQLDatabase, scope=SingletonScope)
   binder.bind(AWSStorage, to=AWSStorage, scope=SingletonScope)

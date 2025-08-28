@@ -38,6 +38,14 @@ class SQLDatabase:
     return self.supabase_client.table(
         os.environ['SUPABASE_DOCUMENTS_TABLE']).select('course_name, s3_path, readable_filename, url, base_url').eq(
             'course_name', course_name).execute()
+  
+  def getCSVFilesForCourse(self, course_name: str, limit: int = 10):
+    """Get CSV files for a course using the optimized index."""
+    return self.supabase_client.table(
+        os.environ.get('SUPABASE_DOCUMENTS_TABLE', 'documents')).select(
+            'id, s3_path, readable_filename, url').eq(
+            'course_name', course_name).eq('is_csv', True).order(
+            'created_at', desc=True).limit(limit).execute()
 
   def getMaterialsForCourseAndS3Path(self, course_name: str, s3_path: str):
     return self.supabase_client.from_(os.environ['SUPABASE_DOCUMENTS_TABLE']).select("id, s3_path, contexts").eq(
