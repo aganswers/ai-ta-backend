@@ -78,3 +78,4 @@ ollama>=0.4.7
 
 pandas
 google-adk
+litellm

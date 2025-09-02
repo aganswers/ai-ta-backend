@@ -44,6 +44,9 @@ from ai_ta_backend.service.workflow_service import WorkflowService
 from ai_ta_backend.service.llmsearch_service import LLMSearchService
 from ai_ta_backend.service.file_agent_service import FileAgentService
 from ai_ta_backend.utils.email.send_transactional_email import send_email
+from ai_ta_backend.service.adk_llm_service import ADKLLMService, EventLogger
+from ai_ta_backend.service.conversation_service import ConversationService
+from ai_ta_backend.agents.agent import root_agent
 from ai_ta_backend.utils.pubmed_extraction import extractPubmedData
 from ai_ta_backend.utils.rerun_webcrawl_for_project import webscrape_documents
 
@@ -734,73 +737,79 @@ def updateProjectDocuments(flaskExecutor: ExecutorInterface) -> Response:
   return response
 
 
-@app.route('/Chat', methods=['POST'])
-def chat_llm_proxy(file_agent_service: FileAgentService) -> Response:
+def _build_conversation_context(messages: list, max_messages: int = 10) -> str:
   """
-  Replacement for the former Next.js `/api/chat-api/chat` route.
-  Accepts the identical JSON payload and will perform:
-    • API–key validation (TODO)
-    • Permission checks (TODO) 
-    • Tool discovery & invocation (TODO)
-    • Image → caption pipeline (TODO)
-    • Retrieval-Augmented Generation (RAG) (TODO)
-    • Model routing / temperature selection (TODO)
-    • Conversation persistence / analytics (TODO)
-    • File agent integration for CSV processing
+  Build a lightweight conversation context string from recent messages.
+  This avoids replaying messages through the LLM while preserving context.
+  """
+  try:
+    # Take only the most recent messages to avoid context explosion
+    recent_messages = messages[-max_messages:] if len(messages) > max_messages else messages
+    
+    if not recent_messages:
+      return ""
+    
+    context_parts = ["Previous conversation:"]
+    for msg in recent_messages:
+      role = msg.get('role', 'user')
+      content = msg.get('content', '')
+      
+      # Handle different content formats
+      if isinstance(content, list):
+        # Extract text from mixed content
+        text_parts = []
+        for item in content:
+          if isinstance(item, dict) and item.get('type') == 'text':
+            text_parts.append(item.get('text', ''))
+        content = ' '.join(text_parts)
+      
+      # Truncate very long messages to avoid context explosion
+      if len(content) > 500:
+        content = content[:497] + "..."
+      
+      context_parts.append(f"{role}: {content}")
+    
+    return "\n".join(context_parts)
+    
+  except Exception as e:
+    print(f"Error building conversation context: {e}")
+    return ""
 
-  For v0 it forwards the final user query to `LLMSearchService`
-  and streams the plain-text answer back to the caller.
 
-  Expected POST body (identical to the old chat.ts):
+@app.route('/Chat', methods=['POST'])
+def chat_llm_proxy(file_agent_service: FileAgentService, supabase_client=None) -> Response:
+  """
+  ADK-powered chat endpoint with streaming SSE support.
+  Accepts the identical JSON payload as the former Next.js route and streams
+  ADK Event objects via Server-Sent Events for real-time tool transparency.
+
+  Expected POST body:
     {
       model, messages, temperature, course_name,
       stream, api_key, retrieval_only, conversation
     }
+  
+  Response: SSE stream with data: <Event JSON>\n\n format
   """
   
   payload = request.get_json(force=True)
-
-  # ------------------------------------------------------------------
-  # PLACEHOLDER LOGIC – all real implementations will plug in here.
-  # ------------------------------------------------------------------
-  # TODO: validate_api_key(payload.get("api_key"))
-  #       Input: api_key (string)
-  #       Output: user_info (dict with user_id, permissions, etc.)
-  #       Raises: 401 if invalid
-  
-  # TODO: permission = check_user_permission(user_info, payload.get("course_name"))
-  #       Input: user_info (dict), course_name (string)
-  #       Output: permission_level (string: 'read', 'write', 'admin')
-  #       Raises: 403 if insufficient permissions
-  
-  # TODO: course_meta = fetch_course_metadata(payload.get("course_name"))
-  #       Input: course_name (string)
-  #       Output: CourseMetadata (dict with settings, doc_groups, etc.)
-  
-  # TODO: selected_model, providers = determine_and_validate_model(payload.get("model"))
-  #       Input: model (string like "gpt-4o", "claude-3-sonnet")
-  #       Output: (provider_name: string, normalized_model: string, api_keys: dict)
-  
-  # TODO: contexts = rag_retrieval(last_user_message, course_name, doc_groups, top_n=100)
-  #       Input: query (string), course_name (string), doc_groups (list), top_n (int)
-  #       Output: ContextWithMetadata[] (text, page#, filename, s3_path, score)
-  
-  # TODO: tools = discover_tools(course_name, user_permissions)
-  #       Input: course_name (string), permissions (dict)
-  #       Output: ToolDefinition[] (name, description, parameters, function)
-  
-  # TODO: image_captions = process_image_attachments(payload.get("image_urls", []))
-  #       Input: image_urls (list of strings)
-  #       Output: caption_text (string) for each image
-  # ------------------------------------------------------------------
 
   # Extract conversation data
   conversation = payload.get("conversation", {})
   conversation_id = conversation.get("id", "")
   course_name = payload.get("course_name", "")
   messages = conversation.get("messages", [])
+  
+  # Initialize conversation service for persistence
+  conversation_service = ConversationService(supabase_client)
+  
+  # If no messages provided or we need to rebuild from database
+  if not messages and conversation_id:
+    print(f"No messages provided, attempting to rebuild from database for conversation {conversation_id}")
+    messages = conversation_service.get_conversation_messages(conversation_id)
+  
   if not messages:
-    abort(400, "No messages provided")
+    abort(400, "No messages provided or found in database")
 
   # Prepare file agent with CSV files if course_name is provided
   file_agent_ready = False
@@ -814,36 +823,97 @@ def chat_llm_proxy(file_agent_service: FileAgentService) -> Response:
       print(f"Error preparing file agent: {e}")
       # Continue without file agent if preparation fails
 
-  # Everything except the last message becomes chat_history
-  chat_history = [
-      {"role": m.get("role"), "content": m.get("content")}
-      for m in messages[:-1]
-  ]
+  # Get the last user message
   last_message = messages[-1]
-  question = last_message.get("content", "")
-  if isinstance(question, list):  # image or mixed content array
-    question = " ".join(
-        part.get("text", "") for part in question if part.get("type") == "text"
-    )
-
-  # Initialize service and stream response
-  service = LLMSearchService()
+  
+  # Initialize ADK service and logger
+  adk_service = ADKLLMService(root_agent)
+  event_logger = EventLogger()  # TODO: Pass Supabase client when available
+  event_logger.start_worker()
+  
+  # ADK session parameters
+  user_id = "user"  # TODO: Extract from auth/api_key
+  session_id = conversation_id
   
   def generate():
     try:
-      for token in service.stream_response(question, chat_history):
-        yield token
+      # Ensure ADK session exists (no longer rebuilds history through LLM)
+      session_had_history = adk_service.ensure_session(user_id, session_id, messages)
+      
+      if not session_had_history and len(messages) > 1:
+        print(f"Session {session_id} was new/empty, created with {len(messages) - 1} messages in context")
+      else:
+        print(f"Session {session_id} already exists")
+      
+      # Convert last message to ADK format
+      new_message = adk_service.convert_message_to_content(last_message)
+      
+      # If we have conversation history, include it as context in the new message
+      # This is much more efficient than replaying all messages through the LLM
+      if len(messages) > 1:
+        # Create a conversation context that includes recent history
+        conversation_summary = _build_conversation_context(messages[:-1])
+        if conversation_summary:
+          # Prepend context to the user's message
+          if new_message.parts and new_message.parts[0].text:
+            original_text = new_message.parts[0].text
+            new_message.parts[0].text = f"{conversation_summary}\n\nCurrent message: {original_text}"
+      
+      # Log for debugging
+      print(f"Processing new message in session {session_id} with {len(messages)} total messages")
+      
+      # Stream ADK Events as SSE
+      event_ids = []
+      streamed_events = []
+      for event in adk_service.stream_events(user_id, session_id, new_message):
+        # Format as SSE
+        event_json = event.model_dump_json(by_alias=True, exclude_none=True)
+        yield f"data: {event_json}\n\n"
+        
+        # Collect events for database persistence
+        event_dict = json.loads(event_json)
+        streamed_events.append(event_dict)
+        
+        # Log event asynchronously
+        event_ids.append(event.id)
+        event_logger.log_event_async(event, conversation_id)
+      
+      # Log final message summary
+      if event_ids:
+        # Extract final text content for message logging
+        final_text = ""
+        if hasattr(event, 'content') and event.content and event.content.parts:
+          final_text = " ".join(
+            part.text for part in event.content.parts 
+            if part.text and not getattr(part, 'thought', False)
+          )
+        
+        event_logger.log_message_async(
+          message_id=f"msg_{conversation_id}_{int(time.time())}",
+          conversation_id=conversation_id,
+          role="assistant",
+          content_text=final_text,
+          event_ids=event_ids,
+          model=payload.get("model", "gemini-2.5-flash"),
+          course_name=course_name
+        )
+        
+        # Save ADK events to database for persistence
+        if streamed_events and conversation_id:
+          conversation_service.save_adk_events(streamed_events, conversation_id)
       
       # After streaming completes, process file agent outputs if it was used
       if file_agent_ready and conversation_id:
         try:
           saved_files = file_agent_service.process_file_agent_outputs(conversation_id)
           if saved_files['plots'] or saved_files['csvs']:
-            yield "\n\n---\n"
+            # Send file summary as plain text SSE event
+            summary = "\n\n---\n"
             if saved_files['plots']:
-              yield f"\n📊 Generated plots saved: {', '.join(saved_files['plots'])}"
+              summary += f"\n📊 Generated plots saved: {', '.join(saved_files['plots'])}"
             if saved_files['csvs']:
-              yield f"\n📁 Generated CSVs saved: {', '.join(saved_files['csvs'])}"
+              summary += f"\n📁 Generated CSVs saved: {', '.join(saved_files['csvs'])}"
+            yield f"data: {json.dumps({'type': 'file_summary', 'content': summary})}\n\n"
           
           # Clean up temporary files
           file_agent_service.cleanup_temp_files(conversation_id)
@@ -851,12 +921,21 @@ def chat_llm_proxy(file_agent_service: FileAgentService) -> Response:
           print(f"Error processing file agent outputs: {e}")
           
     except Exception as e:
-      print(f"Error in LLM streaming: {e}")
-      yield f"Error: {str(e)}"
+      print(f"Error in ADK streaming: {e}")
+      error_event = {
+        "id": f"error_{int(time.time())}",
+        "author": "system", 
+        "content": {"role": "assistant", "parts": [{"text": f"Error: {str(e)}"}]},
+        "partial": False
+      }
+      yield f"data: {json.dumps(error_event)}\n\n"
       
-  response = Response(generate(), mimetype="text/plain")
+  response = Response(generate(), mimetype="text/event-stream")
   response.headers.add('Access-Control-Allow-Origin', '*')
+  response.headers.add('Cache-Control', 'no-cache')
+  response.headers.add('Connection', 'keep-alive')
   return response
+
 
 
 def configure(binder: Binder) -> None:

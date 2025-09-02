@@ -170,3 +170,7 @@ pip-selfcheck.json
 GEMINI.md
 adk-samples/
 adk-python/
+# never commit env files
+*.env
+.env*
+old_dotenv.txt
