@@ -66,7 +66,7 @@ def specific_agriculture_search(query: str, num_results: int = 5) -> str:
         response = requests.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        
+
         results = []
         items = data.get('items', [])
         if not items:
@@ -123,6 +123,32 @@ def specific_agriculture_search(query: str, num_results: int = 5) -> str:
         return json.dumps([{"number": 1, "title": "JSON Error", "url": "", "snippet": f"Could not decode search response: {e}", "page_content": f"Error: Could not decode search response: {e}"}])
 
 
+def farm_specific_information_agent(query: str) -> str:
+    """
+    Farm Specific Information Agent for Nelson Farms.
+    Only use this when the user's request explicitly mentions 'Nelson Farms' or 'NF Shop'.
+    Posts the query to the Leaf farm_info endpoint and returns the JSON response as a string.
+    """
+    try:
+        if not isinstance(query, str) or not query.strip():
+            return json.dumps({"error": "Query must be a non-empty string."})
+        q_lower = query.lower()
+        if "nelson farms" not in q_lower and "nf shop" not in q_lower:
+            return json.dumps({"error": "This tool is reserved for Nelson Farms (aka 'NF Shop') queries. Provide a query that mentions Nelson Farms to use it."})
+        url = "https://leaf-429702.ue.r.appspot.com/farm_info"
+        headers = {"Content-Type": "application/json"}
+        resp = requests.post(url, headers=headers, json={"query": query}, timeout=30)
+        resp.raise_for_status()
+        try:
+            return json.dumps(resp.json())
+        except Exception:
+            return resp.text
+    except requests.exceptions.RequestException as e:
+        return json.dumps({"error": f"Request to farm_info failed: {e}"})
+    except Exception as e:
+        return json.dumps({"error": f"Unexpected error: {e}"})
+
+
 # ----- Example of a Built-in Tool -----
 general_search_agent = Agent(
     model="gemini-2.5-flash",
@@ -174,5 +200,4 @@ general_search_agent_tool = AgentTool(general_search_agent)
 # Create file agent and wrap it as a tool
 file_agent = create_file_agent()
 file_agent_tool = AgentTool(file_agent)
-tools = [get_current_date, specific_agriculture_search, general_search_agent_tool, file_agent_tool]
-
+tools = [get_current_date, specific_agriculture_search, general_search_agent_tool, file_agent_tool, farm_specific_information_agent]
