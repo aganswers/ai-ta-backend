@@ -290,6 +290,35 @@ def ingest(context, **inputs: Dict[str | List[str], Any]):
                         'content': content,
                         'doc_groups': doc_groups,
                     })
+    
+    # Notify Google Drive integration of successful ingest
+    try:
+      import requests
+      callback_url = 'https://backend.aganswers.ai/integrations/google/ingest-callback'
+      callback_data = {
+          'course_name': course_name,
+          'readable_filename': readable_filename,
+          's3_key': s3_paths if isinstance(s3_paths, str) else (s3_paths[0] if s3_paths else None),
+          'success': True
+      }
+      requests.post(callback_url, json=callback_data, timeout=10)
+    except Exception as callback_error:
+      print(f"Failed to send success callback: {callback_error}")
+  else:
+    # Notify Google Drive integration of failed ingest
+    try:
+      import requests
+      callback_url = 'https://backend.aganswers.ai/integrations/google/ingest-callback'
+      callback_data = {
+          'course_name': course_name,
+          'readable_filename': readable_filename,
+          's3_key': s3_paths if isinstance(s3_paths, str) else (s3_paths[0] if s3_paths else None),
+          'success': False,
+          'error': str(success_fail_dict.get('failure_ingest', 'Unknown error'))
+      }
+      requests.post(callback_url, json=callback_data, timeout=10)
+    except Exception as callback_error:
+      print(f"Failed to send failure callback: {callback_error}")
 
   print(f"Final success_fail_dict: {success_fail_dict}")
   sentry_sdk.flush(timeout=20)

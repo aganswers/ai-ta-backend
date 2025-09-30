@@ -79,3 +79,5 @@ ollama>=0.4.7
 pandas
 google-adk
 litellm
+APScheduler==3.11.0
+PyJWT>=2.10.1

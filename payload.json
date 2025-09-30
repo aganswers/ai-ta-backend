@@ -1,0 +1,235 @@
+{
+  "conversation": {
+    "id": "986e2021-6ca0-4814-b90f-ed6a8a2e6e3b",
+    "name": "hello",
+    "messages": [
+      {
+        "id": "c6f73a8c-66b7-4d50-b1bd-6cdb52252528",
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ],
+        "wasQueryRewritten": false
+      },
+      {
+        "id": "bec039de-c6f2-473c-b236-ef81498c82df",
+        "role": "assistant",
+        "content": "Hello! I'm AgAnswers, your AI assistant for modern agriculture. How can I help you optimize your operations today?\n",
+        "wasQueryRewritten": false,
+        "toolExecutions": [],
+        "isThinking": false
+      },
+      {
+        "id": "05ffa140-0046-4221-9573-faf3e5b896f1",
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "sup"
+          }
+        ],
+        "wasQueryRewritten": false
+      },
+      {
+        "id": "c1427d89-083b-4b30-b11a-ab98c23df5df",
+        "role": "assistant",
+        "content": "Hello there! How can I assist you with your agricultural needs today?",
+        "wasQueryRewritten": false,
+        "toolExecutions": [],
+        "isThinking": false
+      },
+      {
+        "id": "250d3e92-a7d8-4698-b55a-de243e19abf6",
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ],
+        "wasQueryRewritten": false
+      }
+    ],
+    "model": {
+      "id": "Qwen/Qwen2.5-VL-72B-Instruct",
+      "name": "Qwen 2.5 VL 72B (Best in open source)",
+      "tokenLimit": 23000,
+      "enabled": true
+    },
+    "prompt": "You are a helpful AI assistant. Follow instructions carefully. Respond using markdown. When responding with equations, use MathJax/KaTeX notation. Equations should be wrapped in either:\n\n* Single dollar signs $...$ for inline math\n* Double dollar signs $$...$$ for display/block math\n* Or [...] for display math\n\nHere's how the equations should be formatted in the markdown: Schrödinger Equation: $ihbar \frac{partial}{partial t} Psi(mathbf{r}, t) = hat{H} Psi(mathbf{r}, t)$",
+    "temperature": 0.1,
+    "folderId": null,
+    "userEmail": "aidanandrews0@gmail.com",
+    "projectName": "Test",
+    "createdAt": "2025-09-08T16:37:40.111Z",
+    "updatedAt": "2025-09-08T16:37:40.111Z",
+    "linkParameters": {
+      "guidedLearning": false,
+      "documentsOnly": false,
+      "systemPromptOnly": false
+    }
+  },
+  "key": "",
+  "course_name": "Test",
+  "stream": true,
+  "courseMetadata": {
+    "is_private": false,
+    "course_owner": "aidanandrews0@gmail.com",
+    "course_admins": [
+      "vikram.s.adve@gmail.com",
+      "adityasngpta@gmail.com",
+      "aidanandrews22@gmail.com"
+    ],
+    "approved_emails_list": null,
+    "example_questions": null,
+    "banner_image_s3": null,
+    "course_intro_message": null,
+    "openai_api_key": null,
+    "system_prompt": null,
+    "disabled_models": null,
+    "project_description": null
+  },
+  "llmProviders": {
+    "Ollama": {
+      "provider": "Ollama",
+      "enabled": true,
+      "models": []
+    },
+    "OpenAI": {
+      "provider": "OpenAI",
+      "enabled": true,
+      "models": []
+    },
+    "Azure": {
+      "provider": "Azure",
+      "enabled": true,
+      "models": []
+    },
+    "Anthropic": {
+      "provider": "Anthropic",
+      "enabled": true,
+      "models": []
+    },
+    "WebLLM": {
+      "provider": "WebLLM",
+      "enabled": true,
+      "models": [
+        {
+          "id": "Llama 3.1 8b Instruct",
+          "name": "Llama 3.1 8b Instruct",
+          "tokenLimit": 4096,
+          "downloadSize": "4.9GB",
+          "enabled": true
+        },
+        {
+          "id": "Llama 3.1 70b Instruct",
+          "name": "Llama 3.1 70b Instruct",
+          "tokenLimit": 4096,
+          "downloadSize": "30.4GB",
+          "enabled": false
+        },
+        {
+          "id": "Phi 3 Mini Instruct",
+          "name": "Phi 3 Mini Instruct",
+          "tokenLimit": 4096,
+          "downloadSize": "5.4GB",
+          "enabled": true
+        },
+        {
+          "id": "Hermes 2 Pro Llama 3 8B",
+          "name": "Hermes 2 Pro Llama 3 8B",
+          "tokenLimit": 4096,
+          "downloadSize": "5.9GB",
+          "enabled": false
+        },
+        {
+          "id": "Hermes 2 Pro Mistral 7B",
+          "name": "Hermes 2 Pro Mistral 7B",
+          "tokenLimit": 4096,
+          "downloadSize": "3.9GB",
+          "enabled": false
+        },
+        {
+          "id": "Mistral 7b Instruct v0.3",
+          "name": "Mistral 7b Instruct v0.3",
+          "tokenLimit": 4096,
+          "downloadSize": "5.5GB",
+          "enabled": false
+        },
+        {
+          "id": "OpenHermes 2.5 Mistral 7B",
+          "name": "OpenHermes 2.5 Mistral 7B",
+          "tokenLimit": 4096,
+          "downloadSize": "4.5GB",
+          "enabled": false
+        },
+        {
+          "id": "NeuralHermes 2.5 Mistral 7B",
+          "name": "NeuralHermes 2.5 Mistral 7B",
+          "tokenLimit": 4096,
+          "downloadSize": "4.5GB",
+          "enabled": false
+        },
+        {
+          "id": "WizardMath 7b V1.1",
+          "name": "WizardMath 7b V1.1",
+          "tokenLimit": 4096,
+          "downloadSize": "4.5GB",
+          "enabled": false
+        },
+        {
+          "id": "Gemma 2b",
+          "name": "Gemma 2b",
+          "tokenLimit": 4096,
+          "downloadSize": "1.7GB",
+          "enabled": true
+        },
+        {
+          "id": "Qwen2 7b Instruct",
+          "name": "Qwen2 7b Instruct",
+          "tokenLimit": 4096,
+          "downloadSize": "5.0GB",
+          "enabled": false
+        },
+        {
+          "id": "Phi 2",
+          "name": "Phi 2",
+          "tokenLimit": 2048,
+          "downloadSize": "3.9GB",
+          "enabled": false
+        }
+      ]
+    },
+    "NCSAHosted": {
+      "provider": "NCSAHosted",
+      "enabled": true,
+      "models": [],
+      "error": "Failed to parse URL from undefined/api/ps"
+    },
+    "NCSAHostedVLM": {
+      "provider": "NCSAHostedVLM",
+      "enabled": true,
+      "models": []
+    },
+    "Bedrock": {
+      "provider": "Bedrock",
+      "enabled": true,
+      "models": []
+    },
+    "Gemini": {
+      "provider": "Gemini",
+      "enabled": true,
+      "models": []
+    }
+  },
+  "model": {
+    "id": "Qwen/Qwen2.5-VL-72B-Instruct",
+    "name": "Qwen 2.5 VL 72B (Best in open source)",
+    "tokenLimit": 23000,
+    "enabled": true
+  },
+  "skipQueryRewrite": false
+}

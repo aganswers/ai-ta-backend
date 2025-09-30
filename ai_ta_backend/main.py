@@ -46,9 +46,11 @@ from ai_ta_backend.service.file_agent_service import FileAgentService
 from ai_ta_backend.utils.email.send_transactional_email import send_email
 from ai_ta_backend.service.adk_llm_service import ADKLLMService, EventLogger
 from ai_ta_backend.service.conversation_service import ConversationService
-from ai_ta_backend.agents.agent import root_agent
+from ai_ta_backend.agents.agent import root_agent, create_agent_with_model
 from ai_ta_backend.utils.pubmed_extraction import extractPubmedData
 from ai_ta_backend.utils.rerun_webcrawl_for_project import webscrape_documents
+from ai_ta_backend.integrations.google_drive import drive_bp, GoogleDriveService, drive_service
+from ai_ta_backend.integrations.scheduler import initialize_scheduler, shutdown_scheduler
 
 app = Flask(__name__)
 CORS(app, origins=["https://aganswers.ai", "https://*.aganswers.ai"])
@@ -58,6 +60,9 @@ executor = Executor(app)
 
 # load API keys from globally-availabe .env file
 load_dotenv()
+
+# Register drive integrations blueprint
+app.register_blueprint(drive_bp)
 
 
 @app.route('/')
@@ -800,6 +805,13 @@ def chat_llm_proxy(file_agent_service: FileAgentService, supabase_client=None) -
   course_name = payload.get("course_name", "")
   messages = conversation.get("messages", [])
   
+  # Extract model information from payload
+  model_info = payload.get("model", {})
+  print(f"Received model info: {model_info}")
+  
+  # Create agent with the specified model
+  agent = create_agent_with_model(model_info)
+  
   # Initialize conversation service for persistence
   conversation_service = ConversationService(supabase_client)
   
@@ -826,8 +838,8 @@ def chat_llm_proxy(file_agent_service: FileAgentService, supabase_client=None) -
   # Get the last user message
   last_message = messages[-1]
   
-  # Initialize ADK service and logger
-  adk_service = ADKLLMService(root_agent)
+  # Initialize ADK service and logger with the dynamic agent
+  adk_service = ADKLLMService(agent)
   event_logger = EventLogger()  # TODO: Pass Supabase client when available
   event_logger.start_worker()
   
@@ -894,7 +906,7 @@ def chat_llm_proxy(file_agent_service: FileAgentService, supabase_client=None) -
           role="assistant",
           content_text=final_text,
           event_ids=event_ids,
-          model=payload.get("model", "gemini-2.5-flash"),
+          model=model_info.get("id", "gemini-2.5-flash"),
           course_name=course_name
         )
         
@@ -952,9 +964,26 @@ def configure(binder: Binder) -> None:
   binder.bind(SQLDatabase, to=SQLDatabase, scope=SingletonScope)
   binder.bind(AWSStorage, to=AWSStorage, scope=SingletonScope)
   binder.bind(ExecutorInterface, to=FlaskExecutorAdapter(executor), scope=SingletonScope)
+  
+  # Initialize GoogleDriveService with SQLDatabase and AWSStorage
+  sql_db = SQLDatabase()
+  aws_storage = AWSStorage()
+  drive_service_instance = GoogleDriveService(sql_db, aws_storage)
+  
+  # Store in Flask app context
+  app.drive_service = drive_service_instance
+  
+  # Initialize drive sync scheduler
+  initialize_scheduler(sql_db, drive_service_instance)
 
 
 FlaskInjector(app=app, modules=[configure])
 
 if __name__ == '__main__':
-  app.run(debug=True, port=int(os.getenv("PORT", default=8000)))  # nosec -- reasonable bandit error suppression
+  try:
+    app.run(debug=True, port=int(os.getenv("PORT", default=8000)))  # nosec -- reasonable bandit error suppression
+  except KeyboardInterrupt:
+    print("Shutting down...")
+    shutdown_scheduler()
+  finally:
+    shutdown_scheduler()
