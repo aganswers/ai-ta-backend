@@ -72,7 +72,7 @@ def create_file_agent(conversation_id: Optional[str] = None) -> Agent:
     
     # Create and return the ADK agent
     agent = Agent(
-        model="gemini-2.0-flash-exp",
+        model="gemini-2.5-flash",
         name="file_agent",
         instruction=instruction,
         tools=[run_code_tool]

@@ -4,6 +4,9 @@ Use CAII gmail to auth.
 """
 
 from typing import Any, Callable, Dict, List, Optional, Union, cast
+import os
+import dotenv
+dotenv.load_dotenv()
 
 import beam
 from beam import BotContext  # To obtain task_id
@@ -104,35 +107,7 @@ image = (beam.Image(
 # autoscaler = RequestLatencyAutoscaler(desired_latency=30, max_replicas=2)
 autoscaler = QueueDepthAutoscaler(tasks_per_container=300, max_containers=3)
 
-ourSecrets = [
-    "SUPABASE_URL",
-    "SUPABASE_API_KEY",
-    "VLADS_OPENAI_KEY",
-    "REFACTORED_MATERIALS_SUPABASE_TABLE",
-    "S3_BUCKET_NAME",
-    "QDRANT_URL",
-    "QDRANT_API_KEY",
-    "QDRANT_COLLECTION_NAME",
-    "OPENAI_API_TYPE",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "POSTHOG_API_KEY",
-    "CROPWIZARD_QDRANT_URL",
-    "CROPWIZARD_QDRANT_API_KEY",
-    "CROPWIZARD_OPENAI_KEY",
 
-    "AGANSWERS_OPENAI_KEY",
-    "AGANSWERS_SUPABASE_URL",
-    "AGANSWERS_SUPABASE_API_KEY",
-    "AGANSWERS_QDRANT_URL",
-    "AGANSWERS_QDRANT_API_KEY",
-    "AGANSWERS_QDRANT_COLLECTION_NAME",
-    "AGANSWERS_S3_BUCKET_NAME",
-    "AGANSWERS_AWS_ACCESS_KEY_ID",
-    "AGANSWERS_AWS_SECRET_ACCESS_KEY",
-    "AGANSWERS_POSTHOG_API_KEY",
-    "CLOUDFLARE_R2_ENDPOINT",
-]
 
 
 def loader():
@@ -149,18 +124,11 @@ def loader():
       https=True,
   )
 
-  cropwizard_qdrant_client = QdrantClient(
-      url=os.getenv('CROPWIZARD_QDRANT_URL'),
-      port=443,
-      https=True,
-      api_key=os.getenv('CROPWIZARD_QDRANT_API_KEY'),
-  )
-
   vectorstore = Qdrant(
       client=qdrant_client,
       collection_name=os.environ['AGANSWERS_QDRANT_COLLECTION_NAME'],
       embeddings=OpenAIEmbeddings(
-          openai_api_type=os.environ['OPENAI_API_TYPE'],  # "openai" or "azure"
+          openai_api_type=os.environ['OPENAI_API_TYPE'],
           openai_api_key=os.getenv('AGANSWERS_OPENAI_KEY')))
 
   # S3
@@ -178,17 +146,9 @@ def loader():
       supabase_key=os.environ['AGANSWERS_SUPABASE_API_KEY'],
       options=ClientOptions(postgrest_client_timeout=60,))
 
-  # llm = AzureChatOpenAI(
-  #     temperature=0,
-  #     deployment_name=os.getenv('AZURE_OPENAI_ENGINE'),  #type:ignore
-  #     openai_api_base=os.getenv('AZURE_OPENAI_ENDPOINT'),  #type:ignore
-  #     openai_api_key=os.getenv('AZURE_OPENAI_KEY'),  #type:ignore
-  #     openai_api_version=os.getenv('OPENAI_API_VERSION'),  #type:ignore
-  #     openai_api_type=OPENAI_API_TYPE)
-
   posthog = Posthog(sync_mode=True, project_api_key=os.environ['AGANSWERS_POSTHOG_API_KEY'], host='https://app.posthog.com')
 
-  return qdrant_client, cropwizard_qdrant_client, vectorstore, s3_client, supabase_client, posthog
+  return qdrant_client, vectorstore, s3_client, supabase_client, posthog
 
 
 # Triggers determine how your app is deployed
@@ -202,12 +162,11 @@ def loader():
     # DEPRICATED, not needed -- callback_url='https://uiuc.chat/api/UIUC-api/ingestTaskCallback',
     timeout=60 * 25,
     retries=1,
-    secrets=ourSecrets,
     on_start=loader,
     image=image,
     autoscaler=autoscaler)
 def ingest(context, **inputs: Dict[str | List[str], Any]):
-  qdrant_client, cropwizard_qdrant_client, vectorstore, s3_client, supabase_client, posthog = context.on_start_value
+  qdrant_client, vectorstore, s3_client, supabase_client, posthog = context.on_start_value
   course_name: List[str] | str = inputs.get('course_name', '')
   s3_paths: List[str] | str = inputs.get('s3_paths', '')
   url: List[str] | str | None = inputs.get('url', None)
@@ -220,7 +179,7 @@ def ingest(context, **inputs: Dict[str | List[str], Any]):
       f"In top of /ingest route. course: {course_name}, s3paths: {s3_paths}, readable_filename: {readable_filename}, base_url: {base_url}, url: {url}, content: {content}, doc_groups: {doc_groups}"
   )
 
-  ingester = Ingest(qdrant_client, cropwizard_qdrant_client, vectorstore, s3_client, supabase_client, posthog)
+  ingester = Ingest(qdrant_client, vectorstore, s3_client, supabase_client, posthog)
 
   def run_ingest(course_name, s3_paths, base_url, url, readable_filename, content, groups):
     if content:
@@ -385,9 +344,8 @@ def retry_ingest(supabase_client, posthog, run_ingest, course_name, s3_paths, ba
 
 class Ingest():
 
-  def __init__(self, qdrant_client, cropwizard_qdrant_client, vectorstore, s3_client, supabase_client, posthog):
+  def __init__(self, qdrant_client, vectorstore, s3_client, supabase_client, posthog):
     self.qdrant_client = qdrant_client
-    self.cropwizard_qdrant_client = cropwizard_qdrant_client
     self.vectorstore = vectorstore
     self.s3_client = s3_client
     self.supabase_client = supabase_client
@@ -1210,9 +1168,6 @@ class Ingest():
 
     try:
       chunk_size = 2_000
-      if metadatas[0].get('course_name') == 'GROWMARK-Crop-Protection-Guide':
-        # Special case for this project, try to embed entire PDF page as 1 chunk (better at tables)
-        chunk_size = 6_000
 
       text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
           chunk_size=chunk_size,
@@ -1246,9 +1201,6 @@ class Ingest():
         context.metadata['doc_groups'] = kwargs.get('groups', [])
 
       openai_embeddings_key = os.getenv('AGANSWERS_OPENAI_KEY')
-      if metadatas[0].get('course_name') == 'cropwizard-1.5':
-        print("Using Cropwizard OpenAI key")
-        openai_embeddings_key = os.getenv('CROPWIZARD_OPENAI_KEY')
 
       print("Starting to call embeddings API")
       embeddings_start_time = time.monotonic()
@@ -1256,8 +1208,6 @@ class Ingest():
           input_prompts_list=input_texts,
           request_url='https://api.openai.com/v1/embeddings',
           api_key=openai_embeddings_key,
-          # request_url='https://uiuc-chat-canada-east.openai.azure.com/openai/deployments/text-embedding-ada-002/embeddings?api-version=2023-05-15',
-          # api_key=os.getenv('AZURE_OPENAI_KEY'),
           max_requests_per_minute=10_000,
           max_tokens_per_minute=10_000_000,
           max_attempts=1_000,
@@ -1279,20 +1229,10 @@ class Ingest():
             PointStruct(id=str(uuid.uuid4()), vector=embeddings_dict[context.page_content], payload=upload_metadata))
 
       try:
-        # ----------------------------
-        # SPECIAL CASE FOR CROPWIZARD INGEST
-        # ----------------------------
-        if metadatas[0].get('course_name') == 'cropwizard-1.5':
-          print("Uploading to cropwizard collection...")
-          self.cropwizard_qdrant_client.upsert(
-              collection_name='cropwizard',
-              points=vectors,
-          )
-        else:
-          self.qdrant_client.upsert(
-              collection_name=os.environ['AGANSWERS_QDRANT_COLLECTION_NAME'],
-              points=vectors,
-          )
+        self.qdrant_client.upsert(
+            collection_name=os.environ['AGANSWERS_QDRANT_COLLECTION_NAME'],
+            points=vectors,
+        )
       except Exception as e:
         logging.error("Error in QDRANT upload: ", exc_info=True)
         err = f"Error in QDRANT upload: {e}"
@@ -1492,30 +1432,16 @@ class Ingest():
           print("Error in deleting file from s3:", e)
           sentry_sdk.capture_exception(e)
         # Delete from Qdrant
-        # docs for nested keys: https://qdrant.tech/documentation/concepts/filtering/#nested-key
-        # Qdrant "points" look like this: Record(id='000295ca-bd28-ac4a-6f8d-c245f7377f90', payload={'metadata': {'course_name': 'zotero-extreme', 'pagenumber_or_timestamp': 15, 'readable_filename': 'Dunlosky et al. - 2013 - Improving Students’ Learning With Effective Learni.pdf', 's3_path': 'courses/zotero-extreme/Dunlosky et al. - 2013 - Improving Students’ Learning With Effective Learni.pdf'}, 'page_content': '18  \nDunlosky et al.\n3.3 Effects in representative educational contexts. Sev-\neral of the large summarization-training studies have been \nconducted in regular classrooms, indicating the feasibility of \ndoing so. For example, the study by A. King (1992) took place \nin the context of a remedial study-skills course for undergrad-\nuates, and the study by Rinehart et al. (1986) took place in \nsixth-grade classrooms, with the instruction led by students \nregular teachers. In these and other cases, students benefited \nfrom the classroom training. We suspect it may actually be \nmore feasible to conduct these kinds of training  ...
         try:
-          if course_name == 'cropwizard-1.5':
-            print("Deleting from cropwizard collection...")
-            self.cropwizard_qdrant_client.delete(
-                collection_name='cropwizard',
-                points_selector=models.Filter(must=[
-                    models.FieldCondition(
-                        key="s3_path",
-                        match=models.MatchValue(value=s3_path),
-                    ),
-                ]),
-            )
-          else:
-            self.qdrant_client.delete(
-                collection_name=os.environ['AGANSWERS_QDRANT_COLLECTION_NAME'],
-                points_selector=models.Filter(must=[
-                    models.FieldCondition(
-                        key="s3_path",
-                        match=models.MatchValue(value=s3_path),
-                    ),
-                ]),
-            )
+          self.qdrant_client.delete(
+              collection_name=os.environ['AGANSWERS_QDRANT_COLLECTION_NAME'],
+              points_selector=models.Filter(must=[
+                  models.FieldCondition(
+                      key="s3_path",
+                      match=models.MatchValue(value=s3_path),
+                  ),
+              ]),
+          )
         except Exception as e:
           if "timed out" in str(e):
             # Timed out is fine. Still deletes.
@@ -1570,78 +1496,3 @@ class Ingest():
       sentry_sdk.capture_exception(e)
       return err
 
-  # def ingest_coursera(self, coursera_course_name: str, course_name: str) -> str:
-  #   """ Download all the files from a coursera course and ingest them.
-
-  #   1. Download the coursera content.
-  #   2. Upload to S3 (so users can view it)
-  #   3. Run everything through the ingest_bulk method.
-
-  #   Args:
-  #       coursera_course_name (str): The name of the coursera course.
-  #       course_name (str): The name of the course in our system.
-
-  #   Returns:
-  #       _type_: Success or error message.
-  #   """
-  #   certificate = "-ca 'FVhVoDp5cb-ZaoRr5nNJLYbyjCLz8cGvaXzizqNlQEBsG5wSq7AHScZGAGfC1nI0ehXFvWy1NG8dyuIBF7DLMA.X3cXsDvHcOmSdo3Fyvg27Q.qyGfoo0GOHosTVoSMFy-gc24B-_BIxJtqblTzN5xQWT3hSntTR1DMPgPQKQmfZh_40UaV8oZKKiF15HtZBaLHWLbpEpAgTg3KiTiU1WSdUWueo92tnhz-lcLeLmCQE2y3XpijaN6G4mmgznLGVsVLXb-P3Cibzz0aVeT_lWIJNrCsXrTFh2HzFEhC4FxfTVqS6cRsKVskPpSu8D9EuCQUwJoOJHP_GvcME9-RISBhi46p-Z1IQZAC4qHPDhthIJG4bJqpq8-ZClRL3DFGqOfaiu5y415LJcH--PRRKTBnP7fNWPKhcEK2xoYQLr9RxBVL3pzVPEFyTYtGg6hFIdJcjKOU11AXAnQ-Kw-Gb_wXiHmu63veM6T8N2dEkdqygMre_xMDT5NVaP3xrPbA4eAQjl9yov4tyX4AQWMaCS5OCbGTpMTq2Y4L0Mbz93MHrblM2JL_cBYa59bq7DFK1IgzmOjFhNG266mQlC9juNcEhc'"
-  #   always_use_flags = "-u kastanvday@gmail.com -p hSBsLaF5YM469# --ignore-formats mp4 --subtitle-language en --path ./coursera-dl"
-
-  #   try:
-  #     subprocess.run(
-  #         f"coursera-dl {always_use_flags} {certificate} {coursera_course_name}",
-  #         check=True,
-  #         shell=True,  # nosec -- reasonable bandit error suppression
-  #         stdout=subprocess.PIPE,
-  #         stderr=subprocess.PIPE)  # capture_output=True,
-  #     dl_results_path = os.path.join('coursera-dl', coursera_course_name)
-  #     s3_paths: Union[List, None] = upload_data_files_to_s3(course_name, dl_results_path)
-
-  #     if s3_paths is None:
-  #       return "Error: No files found in the coursera-dl directory"
-
-  #     print("starting bulk ingest")
-  #     start_time = time.monotonic()
-  #     self.bulk_ingest(s3_paths, course_name)
-  #     print("completed bulk ingest")
-  #     print(f"⏰ Runtime: {(time.monotonic() - start_time):.2f} seconds")
-
-  #     # Cleanup the coursera downloads
-  #     shutil.rmtree(dl_results_path)
-
-  #     return "Success"
-  #   except Exception as e:
-  #     err: str = f"Traceback: {traceback.extract_tb(e.__traceback__)}❌❌ Error in {inspect.currentframe().f_code.co_name}:{e}"  # type: ignore
-  #     print(err)
-  #     return err
-
-  # def list_files_recursively(self, bucket, prefix):
-  #   all_files = []
-  #   continuation_token = None
-
-  #   while True:
-  #     list_objects_kwargs = {
-  #         'Bucket': bucket,
-  #         'Prefix': prefix,
-  #     }
-  #     if continuation_token:
-  #       list_objects_kwargs['ContinuationToken'] = continuation_token
-
-  #     response = self.s3_client.list_objects_v2(**list_objects_kwargs)
-
-  #     if 'Contents' in response:
-  #       for obj in response['Contents']:
-  #         all_files.append(obj['Key'])
-
-  #     if response['IsTruncated']:
-  #       continuation_token = response['NextContinuationToken']
-  #     else:
-  #       break
-
-  #   return all_files
-
-
-if __name__ == "__main__":
-  raise NotImplementedError("This file is not meant to be run directly")
-  text = "Testing 123"
-  # ingest(text=text)

@@ -29,7 +29,7 @@ class ProjectService:
     # self.redis_client = redis.Redis.from_url(os.environ['REDIS_URL'], db=0)
     self.redis_client = Redis(url=os.environ['UPSTASH_REDIS_REST_URL'], token=os.environ['UPSTASH_REDIS_REST_TOKEN'])
 
-  def generate_json_schema(self, project_name: str, project_description: str | None) -> None:
+  def generate_json_schema(self, project_name: str, project_description: str | None, group_email: str | None = None) -> None:
     # Generate metadata schema using project_name and project_description
     json_schema = generate_schema_from_project_description(project_name, project_description)
 
@@ -39,9 +39,14 @@ class ProjectService:
         "description": project_description,
         "metadata_schema": json_schema,
     }
+    
+    # Add group_email if provided
+    if group_email:
+        sql_row["group_email"] = group_email
+    
     self.sqlDb.insertProject(sql_row)
 
-  def create_project(self, project_name: str, project_description: str | None, project_owner_email: str) -> str:
+  def create_project(self, project_name: str, project_description: str | None, project_owner_email: str) -> dict:
     """
         This function takes in a project name and description and creates a project in the database.
         1. Generate metadata schema using project_name and project_description
@@ -73,6 +78,17 @@ class ProjectService:
       print("Setting course_metadatas. value: ", value)
       self.redis_client.hset('course_metadatas', project_name, json.dumps(value))
 
+      # Create Google Group for project
+      group_email = None
+      try:
+        from ai_ta_backend.integrations.google_groups import GoogleGroupsService
+        groups_service = GoogleGroupsService()
+        group_email = groups_service.create_project_group(project_name)
+        print(f"✅ Created Google Group: {group_email}")
+      except Exception as e:
+        print(f"⚠️  Warning: Failed to create Google Group for {project_name}: {e}")
+        # Continue with project creation even if group creation fails
+
       # check if the project owner has pre-assigned API keys
       if project_owner_email:
         pre_assigned_response = self.sqlDb.getPreAssignedAPIKeys(project_owner_email)
@@ -91,8 +107,8 @@ class ProjectService:
           print(f"Setting -llms default values. Key: `{redis_key}`, value: `{llm_val}`")
           self.redis_client.set(redis_key, json.dumps(llm_val))
 
-      return "success"
+      return {"success": True, "group_email": group_email}
     except Exception as e:
       print("Error in create_project: ", e)
       self.sentry.capture_exception(e)
-      return f"Error while creating project: {e}"
+      return {"success": False, "error": f"Error while creating project: {e}"}

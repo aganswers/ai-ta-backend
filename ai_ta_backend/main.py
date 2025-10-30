@@ -46,23 +46,21 @@ from ai_ta_backend.service.file_agent_service import FileAgentService
 from ai_ta_backend.utils.email.send_transactional_email import send_email
 from ai_ta_backend.service.adk_llm_service import ADKLLMService, EventLogger
 from ai_ta_backend.service.conversation_service import ConversationService
-from ai_ta_backend.agents.agent import root_agent, create_agent_with_model
 from ai_ta_backend.utils.pubmed_extraction import extractPubmedData
 from ai_ta_backend.utils.rerun_webcrawl_for_project import webscrape_documents
-from ai_ta_backend.integrations.google_drive import drive_bp, GoogleDriveService, drive_service
-from ai_ta_backend.integrations.scheduler import initialize_scheduler, shutdown_scheduler
 
 app = Flask(__name__)
-CORS(app, origins=["https://aganswers.ai", "https://*.aganswers.ai"])
+CORS(app, 
+     origins=["https://aganswers.ai", "https://dev.aganswers.ai", "https://backend.aganswers.ai"],
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     supports_credentials=True)
 executor = Executor(app)
 # app.config['EXECUTOR_MAX_WORKERS'] = 5 nothing == picks defaults for me
 #app.config['SERVER_TIMEOUT'] = 1000  # seconds
 
 # load API keys from globally-availabe .env file
 load_dotenv()
-
-# Register drive integrations blueprint
-app.register_blueprint(drive_bp)
 
 
 @app.route('/')
@@ -616,6 +614,40 @@ def run_flow(service: WorkflowService) -> Response:
       return response
 
 
+@app.route('/getProjectGroupEmail', methods=['GET'])
+def get_project_group_email(sql_db: SQLDatabase) -> Response:
+  """
+  Get the Google Group email for a project.
+  """
+  project_name = request.args.get('project_name', default='', type=str)
+  
+  if project_name == '':
+    abort(400, description="Missing required parameter: 'project_name' must be provided.")
+  
+  try:
+    project = sql_db.supabase_client.table('projects')\
+      .select('group_email')\
+      .eq('course_name', project_name)\
+      .single()\
+      .execute()
+    
+    if not project.data:
+      abort(404, description=f"Project '{project_name}' not found.")
+    
+    group_email = project.data.get('group_email')
+    
+    response = jsonify({
+      'project_name': project_name,
+      'group_email': group_email
+    })
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
+    
+  except Exception as e:
+    print(f"Error getting project group email: {e}")
+    abort(500, description="Failed to retrieve project group email.")
+
+
 @app.route('/createProject', methods=['POST'])
 def createProject(service: ProjectService, flaskExecutor: ExecutorInterface) -> Response:
   """
@@ -633,7 +665,8 @@ def createProject(service: ProjectService, flaskExecutor: ExecutorInterface) -> 
   result = service.create_project(project_name, project_description, project_owner_email)
 
   # Do long-running LLM task in the background.
-  flaskExecutor.submit(service.generate_json_schema, project_name, project_description)
+  group_email = result.get('group_email') if isinstance(result, dict) else None
+  flaskExecutor.submit(service.generate_json_schema, project_name, project_description, group_email)
 
   response = jsonify(result)
   response.headers.add('Access-Control-Allow-Origin', '*')
@@ -809,9 +842,6 @@ def chat_llm_proxy(file_agent_service: FileAgentService, supabase_client=None) -
   model_info = payload.get("model", {})
   print(f"Received model info: {model_info}")
   
-  # Create agent with the specified model
-  agent = create_agent_with_model(model_info)
-  
   # Initialize conversation service for persistence
   conversation_service = ConversationService(supabase_client)
   
@@ -823,17 +853,29 @@ def chat_llm_proxy(file_agent_service: FileAgentService, supabase_client=None) -
   if not messages:
     abort(400, "No messages provided or found in database")
 
-  # Prepare file agent with CSV files if course_name is provided
+  # Prepare file agent with CSV and Drive files if course_name is provided
   file_agent_ready = False
+  available_files = []
   if course_name and conversation_id:
     try:
       print(f"Preparing file agent for course: {course_name}, conversation: {conversation_id}")
       file_agent_ready = file_agent_service.prepare_file_agent(course_name, conversation_id)
       if file_agent_ready:
-        print(f"File agent ready with CSV files for course: {course_name}")
+        print(f"File agent ready with files for course: {course_name}")
+        
+        # Get the list of loaded files for agent context
+        from ai_ta_backend.agents.tools.file.agent import get_current_dataframes
+        dataframes = get_current_dataframes()
+        if dataframes:
+          available_files = [f"📊 {name}" for name in dataframes.keys()]
+          print(f"Available files for agent context: {available_files}")
     except Exception as e:
       print(f"Error preparing file agent: {e}")
       # Continue without file agent if preparation fails
+  
+  # Create agent with the specified model and available files context
+  from ai_ta_backend.agents.agent import create_agent_with_model
+  agent = create_agent_with_model(model_info, available_files)
 
   # Get the last user message
   last_message = messages[-1]
@@ -964,17 +1006,6 @@ def configure(binder: Binder) -> None:
   binder.bind(SQLDatabase, to=SQLDatabase, scope=SingletonScope)
   binder.bind(AWSStorage, to=AWSStorage, scope=SingletonScope)
   binder.bind(ExecutorInterface, to=FlaskExecutorAdapter(executor), scope=SingletonScope)
-  
-  # Initialize GoogleDriveService with SQLDatabase and AWSStorage
-  sql_db = SQLDatabase()
-  aws_storage = AWSStorage()
-  drive_service_instance = GoogleDriveService(sql_db, aws_storage)
-  
-  # Store in Flask app context
-  app.drive_service = drive_service_instance
-  
-  # Initialize drive sync scheduler
-  initialize_scheduler(sql_db, drive_service_instance)
 
 
 FlaskInjector(app=app, modules=[configure])
@@ -984,6 +1015,3 @@ if __name__ == '__main__':
     app.run(debug=True, port=int(os.getenv("PORT", default=8000)))  # nosec -- reasonable bandit error suppression
   except KeyboardInterrupt:
     print("Shutting down...")
-    shutdown_scheduler()
-  finally:
-    shutdown_scheduler()

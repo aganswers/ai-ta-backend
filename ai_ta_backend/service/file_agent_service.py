@@ -130,18 +130,51 @@ class FileAgentService:
     
     def prepare_file_agent(self, course_name: str, conversation_id: str) -> bool:
         """
-        Prepare the file agent with CSV files for a course.
+        Prepare the file agent with CSV files and Google Drive files for a course.
         Sets up the plot save directory for the conversation.
         """
         try:
             # Clear any existing dataframes
             clear_dataframes()
             
-            # Load CSV files
+            # Load CSV files from R2
             dataframes = self.load_csvs_for_course(course_name)
             
+            # Load Google Drive files if project has a group
+            try:
+                from ai_ta_backend.integrations.google_groups import GoogleGroupsService
+                from ai_ta_backend.agents.tools.drive.agent import load_drive_files_for_project
+                
+                # Get project's group email
+                project = self.sql_db.supabase_client.table('projects')\
+                    .select('group_email')\
+                    .eq('course_name', course_name)\
+                    .single()\
+                    .execute()
+                
+                if project.data and project.data.get('group_email'):
+                    group_email = project.data['group_email']
+                    
+                    # Handle case where group_email might be stored as JSON string
+                    if isinstance(group_email, str) and group_email.startswith('"') and group_email.endswith('"'):
+                        import json
+                        group_email = json.loads(group_email)
+                    
+                    print(f"📁 Loading Drive files for group: {group_email}")
+                    
+                    drive_dataframes = load_drive_files_for_project(course_name, group_email)
+                    
+                    # Merge Drive dataframes with CSV dataframes
+                    if drive_dataframes:
+                        dataframes.update(drive_dataframes)
+                        print(f"✅ Added {len(drive_dataframes)} Drive files to agent")
+                        
+            except Exception as e:
+                print(f"⚠️  Could not load Drive files: {e}")
+                # Continue with just CSV files
+            
             if not dataframes:
-                print(f"No CSV files to load for course: {course_name}")
+                print(f"No files to load for course: {course_name}")
                 # Still prepare the agent even with no files
                 self.current_agent = prepare_file_agent({}, conversation_id, self.supabase_client)
                 return True
