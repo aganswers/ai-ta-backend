@@ -1,6 +1,7 @@
 import os
 
 import boto3
+from boto3.session import Config as BotoConfig
 from injector import inject
 
 
@@ -8,12 +9,29 @@ class AWSStorage:
 
   @inject
   def __init__(self):
-    # S3
+    endpoint = (os.environ.get('CLOUDFLARE_R2_ENDPOINT') or
+                os.environ.get('MINIO_API_URL'))
+
+    access_key = (os.environ.get('AGANSWERS_AWS_ACCESS_KEY_ID') or
+                  os.environ.get('AWS_ACCESS_KEY_ID') or
+                  os.environ.get('AWS_KEY'))
+
+    secret_key = (os.environ.get('AGANSWERS_AWS_SECRET_ACCESS_KEY') or
+                  os.environ.get('AWS_SECRET_ACCESS_KEY') or
+                  os.environ.get('AWS_SECRET'))
+
+    if not access_key or not secret_key:
+      raise ValueError('Missing S3 credentials: expected AGANSWERS_AWS_ACCESS_KEY_ID/AWS_KEY and secret')
+
+    client_config = BotoConfig(s3={'addressing_style': 'path'})
+
     self.s3_client = boto3.client(
         's3',
-        endpoint_url=os.environ.get('MINIO_API_URL'),  # for Self hosted MinIO bucket
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name=os.environ.get('AWS_REGION', 'auto'),
+        config=client_config,
     )
 
   def upload_file(self, file_path: str, bucket_name: str, object_name: str):

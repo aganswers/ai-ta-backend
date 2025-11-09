@@ -41,9 +41,13 @@ class FileAgentService:
         )
         
         # Initialize Supabase storage client
+        supabase_url = os.environ.get('AGANSWERS_SUPABASE_URL') or os.environ['SUPABASE_URL']
+        supabase_key = (os.environ.get('AGANSWERS_SUPABASE_API_KEY') or
+                        os.environ.get('AGANSWERS_SUPABASE_SERVICE_ROLE_KEY') or
+                        os.environ['SUPABASE_API_KEY'])
         self.supabase_client = supabase.create_client(
-            supabase_url=os.environ['SUPABASE_URL'],
-            supabase_key=os.environ['SUPABASE_API_KEY']
+            supabase_url=supabase_url,
+            supabase_key=supabase_key
         )
         
         # R2 bucket name
@@ -139,6 +143,15 @@ class FileAgentService:
             
             # Load CSV files from R2
             dataframes = self.load_csvs_for_course(course_name)
+
+            # Also load recent DigiDocs (OCR HTML) as plain-text DataFrames from Supabase
+            try:
+                digidocs_frames = self._load_digidocs_texts_for_course(course_name, limit=5)
+                if digidocs_frames:
+                    dataframes.update(digidocs_frames)
+                    print(f"✅ Added {len(digidocs_frames)} DigiDocs text files to agent")
+            except Exception as e:
+                print(f"⚠️  Could not load DigiDocs text files: {e}")
             
             # Load Google Drive files if project has a group
             try:
@@ -194,6 +207,55 @@ class FileAgentService:
         except Exception as e:
             print(f"Error preparing file agent: {e}")
             return False
+
+    def _load_digidocs_texts_for_course(self, course_name: str, limit: int = 5) -> Dict[str, pd.DataFrame]:
+        """
+        Load recent OCR HTML ingested documents from Supabase and convert their contexts
+        to pandas DataFrames so the file_agent can use them in chat.
+
+        The resulting DataFrame has columns: ['chunk_index', 'text', 's3_path', 'readable_filename']
+        and is named using the readable filename.
+        """
+        try:
+            docs_table = os.environ.get('SUPABASE_DOCUMENTS_TABLE', 'documents')
+            # Fetch recent DigiDocs HTML documents for the course
+            resp = self.sql_db.supabase_client.table(docs_table) \
+                .select('readable_filename,s3_path,contexts') \
+                .eq('course_name', course_name) \
+                .like('s3_path', 'courses/' + course_name + '/%html') \
+                .order('created_at', desc=True) \
+                .limit(limit) \
+                .execute()
+
+            rows = resp.data or []
+            frames: Dict[str, pd.DataFrame] = {}
+            for row in rows:
+                contexts = row.get('contexts') or []
+                if not isinstance(contexts, list):
+                    continue
+                # Build a DataFrame from contexts array
+                records = []
+                for c in contexts:
+                    try:
+                        records.append({
+                            'chunk_index': c.get('chunk_index'),
+                            'text': c.get('text') or '',
+                            's3_path': row.get('s3_path'),
+                            'readable_filename': row.get('readable_filename') or os.path.basename(row.get('s3_path') or ''),
+                        })
+                    except Exception:
+                        continue
+                if not records:
+                    continue
+                df = pd.DataFrame.from_records(records)
+                # Use a clean filename key for the agent environment
+                rf = row.get('readable_filename') or os.path.basename(row.get('s3_path') or '')
+                key = f"{rf.replace('/', '_')}_text"
+                frames[key] = df
+            return frames
+        except Exception as e:
+            print(f"Error loading DigiDocs texts: {e}")
+            return {}
     
     def save_plot_to_supabase(self, plot_path: str, conversation_id: str) -> Optional[str]:
         """

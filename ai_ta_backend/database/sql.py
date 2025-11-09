@@ -30,9 +30,13 @@ class SQLDatabase:
 
   @inject
   def __init__(self):
-    # Create a Supabase client
+    # Create a Supabase client (prefer AgAnswers credentials when available)
+    supabase_url = os.environ.get('AGANSWERS_SUPABASE_URL') or os.environ['SUPABASE_URL']
+    supabase_key = (os.environ.get('AGANSWERS_SUPABASE_API_KEY') or
+                    os.environ.get('AGANSWERS_SUPABASE_SERVICE_ROLE_KEY') or
+                    os.environ['SUPABASE_API_KEY'])
     self.supabase_client = supabase.create_client(  # type: ignore
-        supabase_url=os.environ['SUPABASE_URL'], supabase_key=os.environ['SUPABASE_API_KEY'])
+        supabase_url=supabase_url, supabase_key=supabase_key)
 
   def getAllMaterialsForCourse(self, course_name: str):
     return self.supabase_client.table(
@@ -344,4 +348,123 @@ class SQLDatabase:
   
   def getProjectMapName(self, course_name, field_name):
     return self.supabase_client.table("projects").select(field_name).eq("course_name", course_name).execute()
+  
+  # ===== Spotlight Search Helper Methods =====
+  
+  def getDocumentsByFileType(self, course_name: str, file_type: str, limit: int = 100):
+    """Get documents filtered by file type for spotlight search.
+    
+    Args:
+        course_name: Course/project name
+        file_type: File type to filter (e.g., 'pdf', 'csv', 'txt')
+        limit: Maximum number of results
+        
+    Returns:
+        Supabase query response
+    """
+    return self.supabase_client.table('documents')\
+        .select('id, readable_filename, s3_path, file_type, summary, keywords, created_at')\
+        .eq('course_name', course_name)\
+        .eq('file_type', file_type)\
+        .order('created_at', desc=True)\
+        .limit(limit)\
+        .execute()
+  
+  def searchDocumentsByKeywords(self, course_name: str, keywords: List[str], limit: int = 20):
+    """Search documents by keywords using array overlap.
+    
+    Args:
+        course_name: Course/project name
+        keywords: List of keywords to search for
+        limit: Maximum number of results
+        
+    Returns:
+        Supabase query response
+    """
+    return self.supabase_client.table('documents')\
+        .select('id, readable_filename, s3_path, file_type, summary, keywords, created_at')\
+        .eq('course_name', course_name)\
+        .overlaps('keywords', keywords)\
+        .order('created_at', desc=True)\
+        .limit(limit)\
+        .execute()
+  
+  def fuzzySearchFilenames(self, course_name: str, search_term: str, limit: int = 20):
+    """Fuzzy search on filenames using trigram similarity.
+    
+    Args:
+        course_name: Course/project name
+        search_term: Search term for fuzzy matching
+        limit: Maximum number of results
+        
+    Returns:
+        Supabase query response
+    """
+    return self.supabase_client.table('documents')\
+        .select('id, readable_filename, s3_path, file_type, summary, keywords, created_at')\
+        .eq('course_name', course_name)\
+        .ilike('readable_filename', f'%{search_term}%')\
+        .order('created_at', desc=True)\
+        .limit(limit)\
+        .execute()
+  
+  def getDocumentsWithVertexIds(self, course_name: str, corpus_id: str, limit: int = 100):
+    """Get documents that have been ingested to Vertex AI.
+    
+    Args:
+        course_name: Course/project name
+        corpus_id: Vertex AI corpus ID
+        limit: Maximum number of results
+        
+    Returns:
+        Supabase query response
+    """
+    return self.supabase_client.table('documents')\
+        .select('id, readable_filename, s3_path, vertex_corpus_id, vertex_document_id, summary, keywords')\
+        .eq('course_name', course_name)\
+        .eq('vertex_corpus_id', corpus_id)\
+        .not_.is_('vertex_document_id', 'null')\
+        .order('created_at', desc=True)\
+        .limit(limit)\
+        .execute()
+  
+  def getStructuredDataFiles(self, course_name: str, limit: int = 100):
+    """Get all structured data files (CSV, Excel, etc.) for a course.
+    
+    Args:
+        course_name: Course/project name
+        limit: Maximum number of results
+        
+    Returns:
+        Supabase query response
+    """
+    structured_types = ['csv', 'xlsx', 'xls', 'json', 'xml']
+    return self.supabase_client.table('documents')\
+        .select('id, readable_filename, s3_path, file_type, column_headers, row_count, summary, created_at')\
+        .eq('course_name', course_name)\
+        .in_('file_type', structured_types)\
+        .order('created_at', desc=True)\
+        .limit(limit)\
+        .execute()
+  
+  def searchDocumentsByText(self, course_name: str, search_text: str, limit: int = 20):
+    """Full-text search on summary and filename.
+    
+    Args:
+        course_name: Course/project name
+        search_text: Text to search for
+        limit: Maximum number of results
+        
+    Returns:
+        Supabase query response
+    """
+    # Search in both filename and summary
+    return self.supabase_client.rpc(
+        'search_documents_fulltext',
+        {
+            'p_course_name': course_name,
+            'search_query': search_text,
+            'result_limit': limit
+        }
+    ).execute()
   

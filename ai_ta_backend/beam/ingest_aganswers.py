@@ -8,6 +8,8 @@ import os
 import dotenv
 dotenv.load_dotenv()
 
+DOCUMENTS_TABLE = os.getenv('REFACTORED_MATERIALS_SUPABASE_TABLE') or 'documents'
+
 import beam
 from beam import BotContext  # To obtain task_id
 from beam import QueueDepthAutoscaler  # RequestLatencyAutoscaler,
@@ -174,6 +176,7 @@ def ingest(context, **inputs: Dict[str | List[str], Any]):
   readable_filename: List[str] | str = inputs.get('readable_filename', '')
   content: str | List[str] | None = inputs.get('content', None)
   doc_groups: List[str] | str = inputs.get('groups', [])
+  parse_html_text_only: bool = bool(inputs.get('parse_html_text_only', False))
 
   print(
       f"In top of /ingest route. course: {course_name}, s3paths: {s3_paths}, readable_filename: {readable_filename}, base_url: {base_url}, url: {url}, content: {content}, doc_groups: {doc_groups}"
@@ -181,25 +184,41 @@ def ingest(context, **inputs: Dict[str | List[str], Any]):
 
   ingester = Ingest(qdrant_client, vectorstore, s3_client, supabase_client, posthog)
 
-  def run_ingest(course_name, s3_paths, base_url, url, readable_filename, content, groups):
+  def run_ingest(course_name, s3_paths, base_url, url, readable_filename, content, groups, parse_html_flag=False):
     if content:
-      return ingester.ingest_single_web_text(course_name, base_url, url, content, readable_filename, groups=groups)
+      return ingester.ingest_single_web_text(
+          course_name,
+          base_url,
+          url,
+          content,
+          readable_filename,
+          groups=groups,
+          parse_html_text_only=parse_html_flag)
     elif readable_filename == '':
-      return ingester.bulk_ingest(course_name, s3_paths, base_url=base_url, url=url, groups=groups)
+      return ingester.bulk_ingest(
+          course_name,
+          s3_paths,
+          base_url=base_url,
+          url=url,
+          groups=groups,
+          parse_html_text_only=parse_html_flag)
     else:
-      return ingester.bulk_ingest(course_name,
-                                  s3_paths,
-                                  readable_filename=readable_filename,
-                                  base_url=base_url,
-                                  url=url,
-                                  groups=groups)
+      return ingester.bulk_ingest(
+          course_name,
+          s3_paths,
+          readable_filename=readable_filename,
+          base_url=base_url,
+          url=url,
+          groups=groups,
+          parse_html_text_only=parse_html_flag)
 
   # First try
   # Full Exception is unexpected, don't bother retrying
   # If success_fail_dict has failures, then enter retry loop
   success_fail_dict = {}
   try:
-    success_fail_dict = run_ingest(course_name, s3_paths, base_url, url, readable_filename, content, doc_groups)
+    success_fail_dict = run_ingest(course_name, s3_paths, base_url, url, readable_filename, content, doc_groups,
+                                   parse_html_text_only)
   except Exception as e:
     # Don't bother retrying
     print("Exception in main ingest", e)
@@ -213,7 +232,7 @@ def ingest(context, **inputs: Dict[str | List[str], Any]):
   # Retry failed ingests (but not unexpected exceptions)
   if success_fail_dict.get('failure_ingest'):
     success_fail_dict = retry_ingest(supabase_client, posthog, run_ingest, course_name, s3_paths, base_url, url,
-                                     readable_filename, content, doc_groups)
+                                     readable_filename, content, doc_groups, parse_html_text_only)
     if isinstance(success_fail_dict, str) or success_fail_dict.get('failure_ingest'):
       error = str(success_fail_dict if isinstance(success_fail_dict, str) else success_fail_dict['failure_ingest'])
       handle_ingest_failure(supabase_client, posthog, course_name, s3_paths, readable_filename, url, base_url, error)
@@ -227,11 +246,14 @@ def ingest(context, **inputs: Dict[str | List[str], Any]):
           .eq('base_url', base_url)\
           .execute()
     else:
-      supabase_client.table('documents_in_progress').delete()\
-          .eq('course_name', course_name)\
-          .eq('s3_path', s3_paths)\
-          .eq('readable_filename', readable_filename)\
-          .execute()
+      cleanup_paths = s3_paths if isinstance(s3_paths, list) else [s3_paths]
+      for path in cleanup_paths:
+        if not path:
+          continue
+        supabase_client.table('documents_in_progress').delete()\
+            .eq('course_name', course_name)\
+            .eq('s3_path', path)\
+            .execute()
   except Exception as e:
     print(f"Error cleaning up documents_in_progress: {e}")
     sentry_sdk.capture_exception(e)
@@ -319,14 +341,24 @@ def handle_ingest_failure(supabase_client, posthog, course_name, s3_paths, reada
                   })
 
 
-def retry_ingest(supabase_client, posthog, run_ingest, course_name, s3_paths, base_url, url, readable_filename, content,
-                 doc_groups):
+def retry_ingest(supabase_client,
+                 posthog,
+                 run_ingest,
+                 course_name,
+                 s3_paths,
+                 base_url,
+                 url,
+                 readable_filename,
+                 content,
+                 doc_groups,
+                 parse_html_text_only=False):
   num_retries = 3
   last_error = None
 
   for retry_num in range(1, num_retries):
     try:
-      success_fail_dict = run_ingest(course_name, s3_paths, base_url, url, readable_filename, content, doc_groups)
+      success_fail_dict = run_ingest(course_name, s3_paths, base_url, url, readable_filename, content, doc_groups,
+                                     parse_html_text_only)
       if isinstance(success_fail_dict, str) or success_fail_dict.get('failure_ingest'):
         print(f"Retry attempt {retry_num}. File: {success_fail_dict}")
         last_error = success_fail_dict
@@ -600,18 +632,48 @@ class Ingest():
       raw_html = response['Body'].read().decode('utf-8', errors='ignore')
 
       soup = BeautifulSoup(raw_html, 'html.parser')
+
+      parse_text_only = bool(kwargs.get('parse_html_text_only', False))
+      if parse_text_only:
+        for tag in soup(['script', 'style', 'noscript', 'template']):
+          try:
+            tag.decompose()
+          except Exception:
+            pass
+        for el in soup.select('[hidden], [aria-hidden="true"]'):
+          try:
+            el.decompose()
+          except Exception:
+            pass
+        for el in soup.select('[style*="display:none"], [style*="display: none"], [style*="visibility:hidden"], [style*="visibility: hidden"]'):
+          try:
+            el.decompose()
+          except Exception:
+            pass
+
       title = s3_path.replace("courses/" + course_name, "")
       title = title.replace(".html", "")
       title = title.replace("_", " ")
       title = title.replace("/", " ")
       title = title.strip()
-      title = title[37:]  # removing the uuid prefix
-      text = [soup.get_text()]
+      if len(title) > 37:
+        title = title[37:]  # removing the uuid prefix when present
+
+      readable_override = str(kwargs.get('readable_filename', '') or '').strip()
+      display_title = readable_override or title or Path(s3_path).name
+
+      if parse_text_only:
+        extracted_text = soup.get_text(separator="\n", strip=True)
+        cleaned_lines = [ln.strip() for ln in extracted_text.splitlines()]
+        cleaned = "\n".join([ln for ln in cleaned_lines if ln])
+      else:
+        cleaned = soup.get_text()
+      text = [cleaned]
 
       metadata: List[Dict[str, Any]] = [{
           'course_name': course_name,
           's3_path': s3_path,
-          'readable_filename': str(title),  # adding str to avoid error: unhashable type 'slice'
+          'readable_filename': display_title,
           'url': kwargs.get('url', ''),
           'base_url': kwargs.get('base_url', ''),
           'pagenumber': '',
@@ -1266,8 +1328,7 @@ class Ingest():
       document_size_mb = len(json.dumps(document).encode('utf-8')) / (1024 * 1024)
       print(f"Document size: {document_size_mb:.2f} MB")
 
-      response = self.supabase_client.table(
-          os.getenv('REFACTORED_MATERIALS_SUPABASE_TABLE')).insert(document).execute()  # type: ignore
+      response = self.supabase_client.table(DOCUMENTS_TABLE).insert(document).execute()  # type: ignore
 
       # need to update Supabase tables with doc group info
       if len(response.data) > 0:
@@ -1322,7 +1383,7 @@ class Ingest():
     For given metadata, fetch docs from Supabase based on S3 path or URL.
     If docs exists, concatenate the texts and compare with current texts, if same, return True.
     """
-    doc_table = os.getenv('REFACTORED_MATERIALS_SUPABASE_TABLE')
+    doc_table = DOCUMENTS_TABLE
     course_name = metadatas[0]['course_name']
     incoming_s3_path = metadatas[0]['s3_path']
     url = metadatas[0]['url']
@@ -1452,7 +1513,7 @@ class Ingest():
             sentry_sdk.capture_exception(e)
 
         try:
-          self.supabase_client.from_(os.environ['REFACTORED_MATERIALS_SUPABASE_TABLE']).delete().eq(
+          self.supabase_client.from_(DOCUMENTS_TABLE).delete().eq(
               's3_path', s3_path).eq('course_name', course_name).execute()
         except Exception as e:
           print("Error in deleting file from supabase:", e)
@@ -1482,7 +1543,7 @@ class Ingest():
 
         try:
           # delete from Supabase
-          self.supabase_client.from_(os.environ['REFACTORED_MATERIALS_SUPABASE_TABLE']).delete().eq(
+          self.supabase_client.from_(DOCUMENTS_TABLE).delete().eq(
               'url', source_url).eq('course_name', course_name).execute()
         except Exception as e:
           print("Error in deleting file from supabase:", e)
@@ -1495,4 +1556,3 @@ class Ingest():
       print(err)
       sentry_sdk.capture_exception(e)
       return err
-

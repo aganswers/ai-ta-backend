@@ -43,6 +43,7 @@ from ai_ta_backend.service.sentry_service import SentryService
 from ai_ta_backend.service.workflow_service import WorkflowService
 from ai_ta_backend.service.llmsearch_service import LLMSearchService
 from ai_ta_backend.service.file_agent_service import FileAgentService
+from ai_ta_backend.service.vertex_ingestion_service import VertexIngestionService
 from ai_ta_backend.utils.email.send_transactional_email import send_email
 from ai_ta_backend.service.adk_llm_service import ADKLLMService, EventLogger
 from ai_ta_backend.service.conversation_service import ConversationService
@@ -814,6 +815,77 @@ def _build_conversation_context(messages: list, max_messages: int = 10) -> str:
     return ""
 
 
+@app.route('/ingest', methods=['POST'])
+def ingest_document(vertex_service: VertexIngestionService) -> Response:
+  """
+  Ingest a document using Vertex AI RAG Engine for spotlight search.
+  
+  POST body:
+    - course_name (str): Name of the course/project
+    - s3_path (str): S3 path to the uploaded document
+    - readable_filename (str): Human-readable filename
+  
+  Returns:
+    JSON response with ingestion status
+  """
+  try:
+    data = request.get_json()
+    
+    course_name = data.get('course_name')
+    s3_path = data.get('s3_path')
+    readable_filename = data.get('readable_filename')
+    
+    # Validate required fields
+    if not all([course_name, s3_path, readable_filename]):
+      abort(400, description="Missing required parameters: course_name, s3_path, and readable_filename must be provided")
+    
+    print(f"\n📥 Received ingestion request:")
+    print(f"   Course: {course_name}")
+    print(f"   File: {readable_filename}")
+    print(f"   S3 Path: {s3_path}\n")
+    
+    # Perform ingestion
+    result = vertex_service.ingest_document(
+      course_name=course_name,
+      s3_path=s3_path,
+      readable_filename=readable_filename
+    )
+    
+    if result.get('success'):
+      response = jsonify({
+        'success': True,
+        'message': f'Successfully ingested {readable_filename}',
+        'file_type': result.get('file_type'),
+        'is_structured': result.get('is_structured'),
+        'metadata': result.get('metadata')
+      })
+      response.status_code = 200
+    else:
+      response = jsonify({
+        'success': False,
+        'error': result.get('error'),
+        'message': f'Failed to ingest {readable_filename}'
+      })
+      response.status_code = 500
+    
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
+    
+  except Exception as e:
+    print(f"❌ Error in /ingest endpoint: {e}")
+    import traceback
+    traceback.print_exc()
+    
+    response = jsonify({
+      'success': False,
+      'error': str(e),
+      'message': 'Internal server error during ingestion'
+    })
+    response.status_code = 500
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
+
+
 @app.route('/Chat', methods=['POST'])
 def chat_llm_proxy(file_agent_service: FileAgentService, supabase_client=None) -> Response:
   """
@@ -1002,6 +1074,7 @@ def configure(binder: Binder) -> None:
   binder.bind(ExportService, to=ExportService, scope=SingletonScope)
   binder.bind(WorkflowService, to=WorkflowService, scope=SingletonScope)
   binder.bind(FileAgentService, to=FileAgentService, scope=RequestScope)
+  binder.bind(VertexIngestionService, to=VertexIngestionService, scope=RequestScope)
   binder.bind(VectorDatabase, to=VectorDatabase, scope=SingletonScope)
   binder.bind(SQLDatabase, to=SQLDatabase, scope=SingletonScope)
   binder.bind(AWSStorage, to=AWSStorage, scope=SingletonScope)

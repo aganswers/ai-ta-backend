@@ -174,3 +174,4 @@ adk-python/
 *.env
 .env*
 old_dotenv.txt
+search-477419-new-key.json

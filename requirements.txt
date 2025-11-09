@@ -81,3 +81,8 @@ google-adk
 litellm
 APScheduler==3.11.0
 PyJWT>=2.10.1
+
+# Google Cloud & Vertex AI
+google-cloud-aiplatform>=1.71.1
+google-cloud-storage>=2.10.0
+google-auth>=2.23.0
