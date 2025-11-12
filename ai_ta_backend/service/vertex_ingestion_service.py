@@ -180,6 +180,10 @@ class VertexIngestionService:
             # Get GCS bucket for Vertex AI
             gcs_bucket = os.getenv('VERTEX_GCS_BUCKET')
             
+            # Initialize variables
+            content_sample = ""
+            rag_file_name = None
+            
             if gcs_bucket:
                 # Use import_files with GCS path (avoids OAuth scope issues)
                 print(f"Using GCS import method for {readable_filename}")
@@ -226,7 +230,6 @@ class VertexIngestionService:
                 
                 # List files to get the document ID
                 files = rag.list_files(corpus_name=corpus.name)
-                rag_file_name = None
                 for f in files:
                     if readable_filename in f.display_name:
                         rag_file_name = f.name
