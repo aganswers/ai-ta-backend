@@ -177,7 +177,66 @@ class VertexIngestionService:
             # Get or create corpus
             corpus = self.create_or_get_corpus(course_name)
             
-            # Download file from S3
+            # Get GCS bucket for Vertex AI
+            gcs_bucket = os.getenv('VERTEX_GCS_BUCKET')
+            
+            if gcs_bucket:
+                # Use import_files with GCS path (avoids OAuth scope issues)
+                print(f"Using GCS import method for {readable_filename}")
+                
+                # Copy file from S3 to GCS
+                from google.cloud import storage
+                gcs_client = storage.Client(project=self.project_id)
+                gcs_bucket_obj = gcs_client.bucket(gcs_bucket)
+                
+                # Download from S3
+                bucket_name = self._get_bucket_name()
+                with NamedTemporaryFile(suffix=Path(s3_path).suffix, delete=False) as tmp_file:
+                    self.aws_storage.s3_client.download_fileobj(
+                        Bucket=bucket_name,
+                        Key=s3_path,
+                        Fileobj=tmp_file
+                    )
+                    tmp_file.flush()
+                    tmp_file_path = tmp_file.name
+                
+                # Extract metadata before uploading
+                with open(tmp_file_path, 'rb') as f:
+                    content_sample = self._extract_content_sample(f, Path(s3_path).suffix)
+                
+                # Upload to GCS
+                gcs_path = f"vertex-rag/{course_name}/{readable_filename}"
+                blob = gcs_bucket_obj.blob(gcs_path)
+                blob.upload_from_filename(tmp_file_path)
+                os.unlink(tmp_file_path)
+                
+                print(f"✅ Copied to GCS: gs://{gcs_bucket}/{gcs_path}")
+                
+                # Import from GCS using import_files
+                rag.import_files(
+                    corpus.name,
+                    [f"gs://{gcs_bucket}/{gcs_path}"],
+                    transformation_config=rag.TransformationConfig(
+                        chunking_config=rag.ChunkingConfig(
+                            chunk_size=512,
+                            chunk_overlap=100,
+                        ),
+                    ),
+                )
+                
+                # List files to get the document ID
+                files = rag.list_files(corpus_name=corpus.name)
+                rag_file_name = None
+                for f in files:
+                    if readable_filename in f.display_name:
+                        rag_file_name = f.name
+                        break
+                
+                print(f"✅ Imported to Vertex RAG: {rag_file_name}")
+                
+            else:
+                # Fallback to upload_file (requires proper OAuth scopes)
+                print(f"Using upload_file method for {readable_filename}")
             bucket_name = self._get_bucket_name()
             with NamedTemporaryFile(suffix=Path(s3_path).suffix) as tmp_file:
                 self.aws_storage.s3_client.download_fileobj(
@@ -188,7 +247,6 @@ class VertexIngestionService:
                 tmp_file.flush()
                 tmp_file.seek(0)
                 
-                # Import file to Vertex AI RAG
                 rag_file = rag.upload_file(
                     corpus_name=corpus.name,
                     path=tmp_file.name,
@@ -197,9 +255,8 @@ class VertexIngestionService:
                 )
                 
                 print(f"✅ Uploaded to Vertex RAG: {rag_file.name}")
+                rag_file_name = rag_file.name
                 
-                # Extract text content for metadata generation
-                # For now, we'll read a sample of the file
                 tmp_file.seek(0)
                 content_sample = self._extract_content_sample(tmp_file, Path(s3_path).suffix)
                 
@@ -208,7 +265,7 @@ class VertexIngestionService:
                 
                 return {
                     'vertex_corpus_id': corpus.name,
-                    'vertex_document_id': rag_file.name,
+                'vertex_document_id': rag_file_name,
                     'summary': metadata.get('summary'),
                     'keywords': metadata.get('keywords', []),
                 }
@@ -260,7 +317,7 @@ class VertexIngestionService:
                     'summary': f"Document: {filename}",
                     'keywords': [Path(filename).stem]
                 }
-            
+
             prompt = f"""Analyze this document and provide:
 1. A concise 2-3 sentence summary
 2. A list of 5-10 relevant keywords
