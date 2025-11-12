@@ -1,0 +1,23 @@
+[Unit]
+Description=Flask Backend API Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/backend
+Environment="PATH=/home/ubuntu/pyenvs/backend/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/home/ubuntu/backend/.env
+ExecStart=/home/ubuntu/pyenvs/backend/bin/python -m flask --app ai_ta_backend.main:app run --host=0.0.0.0 --port=8001
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/backend/output.log
+StandardError=append:/home/ubuntu/backend/output.log
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,178 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install flake8 pylint black
+    
+    - name: Lint with flake8
+      run: |
+        # Stop build if syntax errors or undefined names
+        flake8 ai_ta_backend --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 ai_ta_backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Check code formatting with black
+      run: |
+        black --check ai_ta_backend || echo "Code formatting issues found (non-blocking)"
+    
+    - name: Test Flask app startup
+      env:
+        FLASK_APP: ai_ta_backend.main:app
+
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
+        QDRANT_URL: ${{ secrets.QDRANT_URL }}
+        QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+        VLADS_OPENAI_KEY: ${{ secrets.VLADS_OPENAI_KEY }}
+        OLLAMA_SERVER_URL: ${{ secrets.OLLAMA_SERVER_URL }}
+        POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+        AGANSWERS_POSTHOG_API_KEY: ${{ secrets.AGANSWERS_POSTHOG_API_KEY }}
+        AGANSWERS_S3_BUCKET_NAME: ${{ secrets.AGANSWERS_S3_BUCKET_NAME }}
+        AGANSWERS_OPENAI_KEY: ${{ secrets.AGANSWERS_OPENAI_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AGANSWERS_AWS_ACCESS_KEY_ID: ${{ secrets.AGANSWERS_AWS_ACCESS_KEY_ID }}
+        AGANSWERS_AWS_SECRET_ACCESS_KEY: ${{ secrets.AGANSWERS_AWS_SECRET_ACCESS_KEY }}
+        AGANSWERS_QDRANT_URL: ${{ secrets.AGANSWERS_QDRANT_URL }}
+        AGANSWERS_QDRANT_API_KEY: ${{ secrets.AGANSWERS_QDRANT_API_KEY }}
+        AGANSWERS_QDRANT_COLLECTION_NAME: ${{ secrets.AGANSWERS_QDRANT_COLLECTION_NAME }}
+        QDRANT_COLLECTION_NAME: ${{ secrets.QDRANT_COLLECTION_NAME }}
+        SUPABSE_PLOT_BUCKET_NAME: ${{ secrets.SUPABSE_PLOT_BUCKET_NAME }}
+        AGANSWERS_SUPABASE_URL: ${{ secrets.AGANSWERS_SUPABASE_URL }}
+        AGANSWERS_SUPABASE_API_KEY: ${{ secrets.AGANSWERS_SUPABASE_API_KEY }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        CLOUDFLARE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+        CLOUDFLARE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
+        CLOUDFLARE_R2_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_ENDPOINT }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        MINIO_API_URL: ${{ secrets.MINIO_API_URL }}
+        BEAM_API_KEY: ${{ secrets.BEAM_API_KEY }}
+        UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+        UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        A_OPENAI_API_KEY: ${{ secrets.A_OPENAI_API_KEY }}
+        A_GOOGLE_API_KEY: ${{ secrets.A_GOOGLE_API_KEY }}
+        A_SEARCH_ENGINE_ID: ${{ secrets.A_SEARCH_ENGINE_ID }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        GOOGLE_GENAI_USE_VERTEXAI: ${{ secrets.GOOGLE_GENAI_USE_VERTEXAI }}
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        AWS_KEY: ${{ secrets.AWS_KEY }}
+        AWS_SECRET: ${{ secrets.AWS_SECRET }}
+        S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+        GOOGLE_CLOUD_PROJECT_ID: ${{ secrets.GOOGLE_CLOUD_PROJECT_ID }}
+        GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        VERTEX_AI_LOCATION: ${{ secrets.VERTEX_AI_LOCATION }}
+        VERTEX_RAG_CORPUS_NAME: ${{ secrets.VERTEX_RAG_CORPUS_NAME }}
+        VERTEX_EMBEDDING_MODEL: ${{ secrets.VERTEX_EMBEDDING_MODEL }}
+      run: |
+        timeout 30s flask --app ai_ta_backend.main:app run --port 8001 > startup_test.log 2>&1 &
+        FLASK_PID=$!
+        
+        # Wait for Flask to start
+        echo "Waiting for Flask to start..."
+        for i in {1..20}; do
+          if curl -s http://localhost:8001/ > /dev/null 2>&1; then
+            echo "Flask started successfully!"
+            kill $FLASK_PID 2>/dev/null || true
+            exit 0
+          fi
+          sleep 1
+        done
+        
+        echo "Flask failed to start within 20 seconds"
+        cat startup_test.log
+        kill $FLASK_PID 2>/dev/null || true
+        exit 1
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Deploy to EC2
+      env:
+        EC2_HOST: ${{ secrets.EC2_HOST }}
+        EC2_USER: ${{ secrets.EC2_USER }}
+        EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      run: |
+        echo "Triggering deployment to EC2..."
+        mkdir -p ~/.ssh
+        echo "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        
+        # Create .env file content with all secrets
+        cat > /tmp/deploy_env << 'ENVEOF'
+        SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+        SUPABASE_API_KEY=${{ secrets.SUPABASE_API_KEY }}
+        QDRANT_URL=${{ secrets.QDRANT_URL }}
+        QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }}
+        VLADS_OPENAI_KEY=${{ secrets.VLADS_OPENAI_KEY }}
+        OLLAMA_SERVER_URL=${{ secrets.OLLAMA_SERVER_URL }}
+        POSTHOG_API_KEY=${{ secrets.POSTHOG_API_KEY }}
+        AGANSWERS_POSTHOG_API_KEY=${{ secrets.AGANSWERS_POSTHOG_API_KEY }}
+        AGANSWERS_S3_BUCKET_NAME=${{ secrets.AGANSWERS_S3_BUCKET_NAME }}
+        AGANSWERS_OPENAI_KEY=${{ secrets.AGANSWERS_OPENAI_KEY }}
+        OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+        AGANSWERS_AWS_ACCESS_KEY_ID=${{ secrets.AGANSWERS_AWS_ACCESS_KEY_ID }}
+        AGANSWERS_AWS_SECRET_ACCESS_KEY=${{ secrets.AGANSWERS_AWS_SECRET_ACCESS_KEY }}
+        AGANSWERS_QDRANT_URL=${{ secrets.AGANSWERS_QDRANT_URL }}
+        AGANSWERS_QDRANT_API_KEY=${{ secrets.AGANSWERS_QDRANT_API_KEY }}
+        AGANSWERS_QDRANT_COLLECTION_NAME=${{ secrets.AGANSWERS_QDRANT_COLLECTION_NAME }}
+        QDRANT_COLLECTION_NAME=${{ secrets.QDRANT_COLLECTION_NAME }}
+        SUPABSE_PLOT_BUCKET_NAME=${{ secrets.SUPABSE_PLOT_BUCKET_NAME }}
+        AGANSWERS_SUPABASE_URL=${{ secrets.AGANSWERS_SUPABASE_URL }}
+        AGANSWERS_SUPABASE_API_KEY=${{ secrets.AGANSWERS_SUPABASE_API_KEY }}
+        CLOUDFLARE_ACCOUNT_ID=${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        CLOUDFLARE_ACCESS_KEY_ID=${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+        CLOUDFLARE_SECRET_ACCESS_KEY=${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
+        CLOUDFLARE_R2_ENDPOINT=${{ secrets.CLOUDFLARE_R2_ENDPOINT }}
+        AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        MINIO_API_URL=${{ secrets.MINIO_API_URL }}
+        BEAM_API_KEY=${{ secrets.BEAM_API_KEY }}
+        UPSTASH_REDIS_REST_URL=${{ secrets.UPSTASH_REDIS_REST_URL }}
+        UPSTASH_REDIS_REST_TOKEN=${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        A_OPENAI_API_KEY=${{ secrets.A_OPENAI_API_KEY }}
+        A_GOOGLE_API_KEY=${{ secrets.A_GOOGLE_API_KEY }}
+        A_SEARCH_ENGINE_ID=${{ secrets.A_SEARCH_ENGINE_ID }}
+        GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+        GOOGLE_GENAI_USE_VERTEXAI=${{ secrets.GOOGLE_GENAI_USE_VERTEXAI }}
+        OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+        AWS_KEY=${{ secrets.AWS_KEY }}
+        AWS_SECRET=${{ secrets.AWS_SECRET }}
+        S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}
+        GOOGLE_CLOUD_PROJECT_ID=${{ secrets.GOOGLE_CLOUD_PROJECT_ID }}
+        GOOGLE_APPLICATION_CREDENTIALS=${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        VERTEX_AI_LOCATION=${{ secrets.VERTEX_AI_LOCATION }}
+        VERTEX_RAG_CORPUS_NAME=${{ secrets.VERTEX_RAG_CORPUS_NAME }}
+        VERTEX_EMBEDDING_MODEL=${{ secrets.VERTEX_EMBEDDING_MODEL }}
+        ENVEOF
+        
+        # Copy .env file to EC2
+        scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key /tmp/deploy_env ${EC2_USER}@${EC2_HOST}:/home/ubuntu/backend/.env
+        
+        # Trigger deployment
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key ${EC2_USER}@${EC2_HOST} \
+          'cd /home/ubuntu/backend && ./deploy.sh'
+
