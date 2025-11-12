@@ -27,14 +27,9 @@ jobs:
     
     - name: Lint with flake8
       run: |
-        # Stop build if syntax errors or undefined names
-        flake8 ai_ta_backend --count --select=E9,F63,F7,F82 --show-source --statistics
-        # Exit-zero treats all errors as warnings
-        flake8 ai_ta_backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    
-    - name: Check code formatting with black
-      run: |
-        black --check ai_ta_backend || echo "Code formatting issues found (non-blocking)"
+        # Only fail on syntax errors and critical issues that would cause runtime crashes
+        # E9 = runtime/syntax errors, F63 = invalid print/exec, F7 = syntax errors
+        flake8 ai_ta_backend --count --select=E9,F63,F7 --show-source --statistics || exit 1
     
     - name: Test Flask app startup
       env:

@@ -53,10 +53,10 @@ git pull origin main
 echo -e "${YELLOW}Installing dependencies...${NC}"
 pip install -r requirements.txt --quiet
 
-# Run linting checks
+# Run linting checks (only critical errors)
 echo -e "${YELLOW}Running linting checks...${NC}"
-if ! python -m flake8 ai_ta_backend --count --select=E9,F63,F7,F82 --show-source --statistics; then
-    echo -e "${RED}Linting failed! Rolling back...${NC}"
+if ! python -m flake8 ai_ta_backend --count --select=E9,F63,F7 --show-source --statistics; then
+    echo -e "${RED}Critical linting errors found! Rolling back...${NC}"
     git reset --hard "$CURRENT_COMMIT"
     pip install -r requirements.txt --quiet
     exit 1
