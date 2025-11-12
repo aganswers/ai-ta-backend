@@ -21,8 +21,9 @@ from vertexai import rag
 from vertexai.generative_models import GenerativeModel
 import pandas as pd
 from bs4 import BeautifulSoup
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_openai import OpenAIEmbeddings
+from pydantic import SecretStr
 
 from ai_ta_backend.database.sql import SQLDatabase
 from ai_ta_backend.database.aws import AWSStorage
@@ -63,7 +64,7 @@ class VertexIngestionService:
         openai_key = (os.getenv('AGANSWERS_OPENAI_KEY') or os.getenv('OPENAI_API_KEY'))
         self.openai_embeddings: Optional[OpenAIEmbeddings] = None
         if openai_key:
-            self.openai_embeddings = OpenAIEmbeddings(openai_api_key=openai_key)
+            self.openai_embeddings = OpenAIEmbeddings(api_key=SecretStr(openai_key))
         
         # Track corpus by course name
         self._corpus_cache: Dict[str, Any] = {}
@@ -254,6 +255,12 @@ class VertexIngestionService:
             Dictionary with 'summary' and 'keywords'
         """
         try:
+            if not self.text_model:
+                return {
+                    'summary': f"Document: {filename}",
+                    'keywords': [Path(filename).stem]
+                }
+            
             prompt = f"""Analyze this document and provide:
 1. A concise 2-3 sentence summary
 2. A list of 5-10 relevant keywords
@@ -421,7 +428,7 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5"""
         readable_filename: str,
         file_type: str,
         metadata: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """Store document metadata in Supabase.
         
         Args:

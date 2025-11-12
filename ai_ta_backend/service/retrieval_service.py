@@ -10,11 +10,11 @@ import openai
 import pytz
 from dateutil import parser
 from injector import inject
-from langchain.embeddings.ollama import OllamaEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 
 # from langchain.chat_models import AzureChatOpenAI
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.schema import Document
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
 
 from ai_ta_backend.database.aws import AWSStorage
 from ai_ta_backend.database.sql import (
