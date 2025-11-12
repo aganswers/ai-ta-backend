@@ -237,38 +237,38 @@ class VertexIngestionService:
             else:
                 # Fallback to upload_file (requires proper OAuth scopes)
                 print(f"Using upload_file method for {readable_filename}")
-            bucket_name = self._get_bucket_name()
-            with NamedTemporaryFile(suffix=Path(s3_path).suffix) as tmp_file:
-                self.aws_storage.s3_client.download_fileobj(
-                    Bucket=bucket_name,
-                    Key=s3_path,
-                    Fileobj=tmp_file
-                )
-                tmp_file.flush()
-                tmp_file.seek(0)
-                
-                rag_file = rag.upload_file(
-                    corpus_name=corpus.name,
-                    path=tmp_file.name,
-                    display_name=readable_filename,
-                    description=f"Document from {course_name}: {readable_filename}"
-                )
-                
-                print(f"✅ Uploaded to Vertex RAG: {rag_file.name}")
-                rag_file_name = rag_file.name
-                
-                tmp_file.seek(0)
-                content_sample = self._extract_content_sample(tmp_file, Path(s3_path).suffix)
-                
-                # Extract metadata using Vertex AI
-                metadata = self.extract_metadata_with_vertex(content_sample, readable_filename)
-                
-                return {
-                    'vertex_corpus_id': corpus.name,
+                bucket_name = self._get_bucket_name()
+                with NamedTemporaryFile(suffix=Path(s3_path).suffix) as tmp_file:
+                    self.aws_storage.s3_client.download_fileobj(
+                        Bucket=bucket_name,
+                        Key=s3_path,
+                        Fileobj=tmp_file
+                    )
+                    tmp_file.flush()
+                    tmp_file.seek(0)
+                    
+                    rag_file = rag.upload_file(
+                        corpus_name=corpus.name,
+                        path=tmp_file.name,
+                        display_name=readable_filename,
+                        description=f"Document from {course_name}: {readable_filename}"
+                    )
+                    
+                    print(f"✅ Uploaded to Vertex RAG: {rag_file.name}")
+                    rag_file_name = rag_file.name
+                    
+                    tmp_file.seek(0)
+                    content_sample = self._extract_content_sample(tmp_file, Path(s3_path).suffix)
+            
+            # Extract metadata using Vertex AI
+            metadata = self.extract_metadata_with_vertex(content_sample, readable_filename)
+            
+            return {
+                'vertex_corpus_id': corpus.name,
                 'vertex_document_id': rag_file_name,
-                    'summary': metadata.get('summary'),
-                    'keywords': metadata.get('keywords', []),
-                }
+                'summary': metadata.get('summary'),
+                'keywords': metadata.get('keywords', []),
+            }
                 
         except Exception as e:
             print(f"❌ Error ingesting unstructured document: {e}")
